@@ -1,0 +1,7 @@
+<form id="print_form" action="/admin" method="get" > {% csrf_token %} 
+	<input type="submit" value="Admin Interface"> 
+</form>
+
+<form id="print_form" action="{% url 'main_menu' %}" method="get" > {% csrf_token %} 
+	<input type="submit" value="Create Request"> 
+</form>

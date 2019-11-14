@@ -1,0 +1,45 @@
+{% extends 'kanbanbomsapp/base.html' %}
+
+{% block content %}
+
+<div class="pr-wrapper">
+	<div class="pr-buttons mb-4">
+		<form id="back_form" action="{% url 'edit_request' request_id %}" method="get" > {% csrf_token %} </form>
+		<input type="submit" value="Back" form="back_form" class="btn btn-secondary mr-1"><input type="button" onclick="window.print();" value="Print" form="print_form" class="btn btn-primary">
+	</div>
+
+<h1>Part Request</h1>
+
+<h2 class="mt-2">Assemblies</h2>
+
+	<table class="pr-assemblies-table">
+		<tbody>
+		{% for assembly in assemblies %}
+    	<tr>
+    		<td>x{{assembly.quantity}}</td><td>{{assembly.part.partno}}</td><td class="text"><span>{{assembly.part.description}}</span></td>
+    	</tr>
+    	{% endfor %}
+    	</tbody>
+	</table>
+
+<h2 class="mt-2">Bill Of Materials</h2>
+<table class="pr-table">
+	<thead>
+	<tr>
+		<th>Part Number</th>
+		<th>Description</th>
+		<th>Quantity</th>
+	</tr>
+	</thead>
+	<tbody>
+	{% for part in parts %}
+    <tr>
+    	<td>{{ part.0 }}</td> 
+    	<td class="text"><span>{{ part.1 }}</span></td> 
+    	<td>{{ part.2 }}</td>
+    </tr>
+    {% endfor %}
+	</tbody>
+</table>
+</div>
+{% endblock %}

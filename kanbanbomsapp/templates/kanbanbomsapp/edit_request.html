@@ -1,0 +1,48 @@
+{% extends 'kanbanbomsapp/base.html' %}
+
+{% block content %}
+<div class="wrapper">
+<div class="mb-4"><h1 >Make Request</h1></div>
+<form class="form" action="{% url 'edit_request_add' request.id %}" method="post">
+	{% csrf_token %}
+	<div class="input-group">
+		<input type="text" class="form-control col-sm-3  {% if partno_validation_error %} is-invalid {% endif %}" name="partno" value="{{ partno }}">
+		<span class="input-group-btn ml-1">
+			<input class="btn btn-primary" type="submit" value="Add" class="btn btn-primary">
+		</span>
+		<div class="invalid-feedback">{{ partno_validation_error }}</div>
+	</div>
+	
+</form>
+
+{% if request_entries %}
+<form id="update_form" action="{% url 'update_request' request.id %}" method="post"> {% csrf_token %}</form>
+<form id="print_form" action="{% url 'print_request' request.id %}" method="get" > {% csrf_token %} </form>
+<form id="clear_form" action="{% url 'clear_request' request.id %}" method="get" > {% csrf_token %} </form>
+<table  class="table text-nowrap table-sm">
+	<thead>
+	<tr>
+		<th >Part Number</th>
+		<th>Description</th>
+		<th>Quantity</th>
+	</tr>
+	</thead>
+	<tbody>
+    {% for request_entry in request_entries %}
+    	<tr>
+    	<td >{{ request_entry.part.partno }}</td> 
+    	<td class="text"><span >{{ request_entry.part.description }}</span></td> 
+    	<td ><input class="form-control " type="number" name="{{request_entry.part.partno}}" value="{{ request_entry.quantity }}" form="update_form"></td>
+    	</tr>
+    {% endfor %}
+    </tbody>
+</table>
+<input type="submit" value="Print Preview" form="print_form" class="btn btn-primary">
+<input type="submit" value="Update" form="update_form" class="btn btn-secondary">
+<input type="submit" value="Clear Request" form="clear_form" class="btn btn-danger">
+{% else %}
+    <p>Scan kanban card or enter part numbers manually</p>
+{% endif %}
+</div>
+{% endblock %}
+
