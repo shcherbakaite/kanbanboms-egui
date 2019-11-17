@@ -7,7 +7,7 @@ WorkingDirectory=/root/kanbanboms/
 User=root
 Type=simple
 RestartSec=1
-ExecStart=/usr/bin/python3 /root/kanbanboms/manage.py runserver 138.68.242.73:80
+ExecStart=/usr/bin/python3 /var/www/manage.py runserver 138.68.242.73:80
 
 [Install]
 WantedBy=multi-user.target
