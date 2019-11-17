@@ -2,6 +2,10 @@ from django.urls import path
 
 from . import views
 
+from django.conf.urls.static import static
+
+from django.conf import settings
+
 urlpatterns = [
 	path('', views.index, name='index'),
 	path('createrequest', views.create_request, name='create_request'),

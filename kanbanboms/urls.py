@@ -19,4 +19,4 @@ from django.urls import path, include
 urlpatterns = [
     path('', include('kanbanbomsapp.urls')),
     path('admin/', admin.site.urls),
-]
+] 
