@@ -1,0 +1,7 @@
+[Unit]
+Description=Kanbanboms Web Server
+
+[Service]
+User=root
+Type=oneshot
+ExecStart=/usr/bin/python3 /root/kanbanboms/manage.py runserver 138.68.242.73:80
