@@ -1,7 +1,14 @@
 [Unit]
 Description=Kanbanboms Web Server
+After=network.target
 
 [Service]
+WorkingDirectory=/root/kanbanboms/
 User=root
-Type=oneshot
+Type=simple
+RestartSec=1
 ExecStart=/usr/bin/python3 /root/kanbanboms/manage.py runserver 138.68.242.73:80
+
+[Install]
+WantedBy=multi-user.target
+
