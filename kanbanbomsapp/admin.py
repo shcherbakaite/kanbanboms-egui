@@ -6,10 +6,11 @@ class BOMEntryInline(admin.TabularInline):
 	model = BOMEntry
 	extra = 1
 	fk_name = "bom"
-	fields = ('part','quantity')
+	fields = ('part','disabled','quantity')
 	autocomplete_fields = ("part",)
 
 class BOMAdmin(admin.ModelAdmin):
+	ordering = ['partno']
 	search_fields = ("partno","description")
 	inlines = [
 		BOMEntryInline,

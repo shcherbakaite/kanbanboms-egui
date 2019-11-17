@@ -1,12 +1,14 @@
 {% extends 'kanbanbomsapp/base.html' %}
 
 {% block content %}
+
 <div class="wrapper">
 <div class="mb-4"><h1 >Make Request</h1></div>
 <form class="form" action="{% url 'edit_request_add' request.id %}" method="post">
 	{% csrf_token %}
 	<div class="input-group">
-		<input type="text" class="form-control col-sm-3  {% if partno_validation_error %} is-invalid {% endif %}" name="partno" value="{{ partno }}">
+		<!-- WIP: Autocomplete feature -->
+		<input autocomplete="off" type="text" class=" basicAutoComplete form-control col-sm-3  {% if partno_validation_error %} is-invalid {% endif %}" name="partno" value="{{ partno }}">
 		<span class="input-group-btn ml-1">
 			<input class="btn btn-primary" type="submit" value="Add" class="btn btn-primary">
 		</span>
@@ -44,5 +46,14 @@
     <p>Scan kanban card or enter part numbers manually</p>
 {% endif %}
 </div>
+
+<script>
+// WIP: Autocomplete feature
+// $('.basicAutoComplete').autoComplete({
+//     resolverSettings: {
+//         url: "{% url 'edit_request_autocomplete' %}"
+//     }
+// });
+</script>
 {% endblock %}
 

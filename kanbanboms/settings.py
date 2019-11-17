@@ -25,7 +25,7 @@ SECRET_KEY = '4&*^x%!y-*=2q1j6(&a3^v(=zicr+w4x($gz4j*0pa&n*wmg&3'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['192.168.0.11', '127.0.0.1']
 
 
 # Application definition
@@ -76,12 +76,13 @@ WSGI_APPLICATION = 'kanbanboms.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'USER': 'django',
-        'PASSWORD': 'moat',
-        'HOST': 'localhost',
-        #'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': 'mydatabase',
+        #'ENGINE': 'django.db.backends.mysql',
+        #'USER': 'django',
+        #'PASSWORD': 'moat',
+        #'HOST': 'localhost',
+        'ENGINE': 'django.db.backends.sqlite3',
+        #'NAME' : "mydatabase"
+        'NAME': 'db.sqlite3',
     }
 }
 

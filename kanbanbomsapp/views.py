@@ -18,16 +18,9 @@ from collections import defaultdict
 
 from functools import reduce
 
-#from string import strip
+from .utils import normalize_partno
 
-def index(request):
-    return HttpResponse("Hello, world. You're at the polls index.")
-
-def manage_boms(request, filter):
-	return HttpResponse("Hello, world. You're at the polls index.")
-
-def edit_bom(request, bom_id):
-	return HttpResponse("Hello, world. You're at the polls index.")
+from django.http import JsonResponse
 
 def edit_request(request, request_id, error="", partno=""):
 	try:
@@ -47,7 +40,7 @@ def edit_request(request, request_id, error="", partno=""):
 
 def edit_request_add(request, request_id):
 	request_object = Request.objects.get(pk=request_id)
-	partno=request.POST['partno'].replace(" ","")
+	partno=normalize_partno(request.POST['partno'])
 	try:
 		part = BOM.objects.get(partno__iexact=partno)
 	except BOM.DoesNotExist:
@@ -80,7 +73,9 @@ def print_request(request, request_id):
 
 	for request_entry in request_object.requestentry_set.all():
 		for bom_entry in request_entry.part.bomentry_set.all():
-			parts.append((bom_entry.part.partno, bom_entry.part.description,request_entry.quantity*bom_entry.quantity));
+			quantity = request_entry.quantity*bom_entry.quantity*(not bom_entry.disabled)
+			if quantity:
+				parts.append((bom_entry.part.partno, bom_entry.part.description, quantity));
 
 	parts_groups = defaultdict(list)
 	for part in parts:
@@ -100,14 +95,25 @@ def print_request(request, request_id):
 	}
 	return HttpResponse(template.render(context, request))
 
+# WIP: Autocomplete feature
+def edit_request_autocomplete(request):
+	return JsonResponse([
+		"75166-SD-100 Dashboard assembly, Roll/Slab, Full, Cup Holder, Switch", 
+		"75167-SD-100 Stereo assembly, Roll/Slab, Full, Cup Holder, Switch"
+		], safe=False)
+
 def clear_request(request, request_id):
 	request_object = Request.objects.get(pk=request_id)
 	e = request_object.requestentry_set.all()
 	e.delete()
 	return HttpResponseRedirect(reverse('edit_request', args=(request_id,)))
 
-def main_menu(request):
-	template = loader.get_template('kanbanbomsapp/main.html')
-	return HttpResponse(template.render({}, request))
+def create_request(request):
+	r = Request.objects.create()
+	r.save()
+	return HttpResponseRedirect(reverse('edit_request', args=(r.pk,)))
+
+def index(request):
+	return HttpResponseRedirect(reverse('create_request'))
 
 

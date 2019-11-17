@@ -10,7 +10,8 @@ class BOM(models.Model):
 class BOMEntry(models.Model):
 	bom = models.ForeignKey(BOM, on_delete=models.CASCADE)
 	part = models.ForeignKey(BOM, on_delete=models.CASCADE,  related_name='part')
-	quantity = models.IntegerField(default=0)
+	quantity = models.IntegerField(default=1)
+	disabled = models.BooleanField(default=False)
 	def __str__(self):
 		return self.bom.partno + " -> " + self.part.partno + " x" + str(self.quantity)
 
