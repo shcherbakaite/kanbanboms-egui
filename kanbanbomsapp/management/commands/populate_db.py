@@ -10,9 +10,13 @@ from pprint import pprint
 
 def normalize_partno(partno):
 	regex = re.compile('\s*([0-9]{5})\s*-\s*([a-zA-Z]{2})\s*-\s*([0-9]{3})\s*')
+	regex2 = re.compile('\s*EL\s*-\s*([0-9]{4})\s*')
 	match = regex.match(partno.upper())
+	match2= regex2.match(partno.upper())
 	if match:
 		return match.group(1) + "-" + match.group(2) + "-" + match.group(3)
+	elif match2:
+		return "EL-" + match2.group(1);
 	else:
 		return ""
 
@@ -61,17 +65,27 @@ class Command(BaseCommand):
 		#pprint(boms)
 		for bom in boms.items():
 			(bom_partno,entry) = bom
+			# check if already exists(TODO)
 
-			b = BOM.objects.create(partno=bom_partno, description=entry['description'], batch_quantity=1)
-			b.save();
+			b = BOM.objects.filter(partno=bom_partno)
+			if b.exists():
+				b = BOM.objects.get(partno=bom_partno)
+			else:
+				b = BOM.objects.create(partno=bom_partno, description=entry['description'], batch_quantity=1)
+				b.save();
 
 			for part in entry['parts']:
 				p = BOM.objects.filter(partno=part['partno'])
 				if not p.exists():
 					p = BOM.objects.create(partno=part['partno'], description=part['description'], batch_quantity=0)
 					p.save()
+					
 				print(part['partno'])
-				p = BOM.objects.get(partno=part['partno'])#.first()
+				#if  BOM.objects.filter(partno=part['partno']).count() > 1:
+				#	pprint(BOM.objects.filter(partno=part['partno'])[0])
+				#	pprint(BOM.objects.filter(partno=part['partno'])[1])
+				#else:
+				p = BOM.objects.filter(partno=part['partno']).first()
 				be = b.bomentry_set.create(bom=b,part=p,quantity=part['quantity'],disabled=part['disabled'])
 			
 
