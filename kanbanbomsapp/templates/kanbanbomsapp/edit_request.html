@@ -8,7 +8,7 @@
 	{% csrf_token %}
 	<div class="input-group">
 		<!-- WIP: Autocomplete feature -->
-		<input autocomplete="off" type="text" class=" basicAutoComplete form-control col-sm-3  {% if partno_validation_error %} is-invalid {% endif %}" name="partno" value="{{ partno }}">
+		<input autofocus="True" autocomplete="off" type="text" class=" basicAutoComplete form-control col-sm-3  {% if partno_validation_error %} is-invalid {% endif %}" name="partno" value="{{ partno }}">
 		<span class="input-group-btn ml-1">
 			<input class="btn btn-primary" type="submit" value="Add" class="btn btn-primary">
 		</span>
