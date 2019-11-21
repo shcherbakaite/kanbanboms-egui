@@ -8,17 +8,7 @@ from collections import defaultdict
 
 from pprint import pprint
 
-def normalize_partno(partno):
-	regex = re.compile('\s*([0-9]{5})\s*-\s*([a-zA-Z]{2})\s*-\s*([0-9]{3})\s*')
-	regex2 = re.compile('\s*EL\s*-\s*([0-9]{4})\s*')
-	match = regex.match(partno.upper())
-	match2= regex2.match(partno.upper())
-	if match:
-		return match.group(1) + "-" + match.group(2) + "-" + match.group(3)
-	elif match2:
-		return "EL-" + match2.group(1);
-	else:
-		return ""
+from kanbanbomsapp.utils import normalize_partno
 
 def parse_bom_entry(csv_row):
 	partno = normalize_partno(csv_row[9])
@@ -79,7 +69,7 @@ class Command(BaseCommand):
 				if not p.exists():
 					p = BOM.objects.create(partno=part['partno'], description=part['description'], batch_quantity=0)
 					p.save()
-					
+
 				print(part['partno'])
 				#if  BOM.objects.filter(partno=part['partno']).count() > 1:
 				#	pprint(BOM.objects.filter(partno=part['partno'])[0])
