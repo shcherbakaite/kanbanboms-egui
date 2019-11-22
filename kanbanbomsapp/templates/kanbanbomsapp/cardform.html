@@ -1,0 +1,92 @@
+{% extends 'kanbanbomsapp/base.html' %}
+
+{% block content %}
+<div class="wrapper">
+
+<form action="{% url 'render_card' %}" method="post">
+  {% csrf_token %}
+  <h1 >Card 1</h1>
+  <div class="form-group row">
+    <label for="partno1" class="col-sm-2 col-form-label">Part Number</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" name="partno1" placeholder="99999-XX-999">
+    </div>
+  </div>
+  <div class="form-group row">
+    <label for="description1" class="col-sm-2 col-form-label">Description</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" name="description1" placeholder="Thermonuclear Warhhead">
+    </div>
+  </div>
+  <div class="form-group row">
+    <label for="batch1" class="col-sm-2 col-form-label">Batch Quantity</label>
+    <div class="col-sm-10">
+      <input type="number" class="form-control" name="batch1" placeholder="1">
+    </div>
+  </div>
+
+  <h1 >Card 2</h1>
+  <div class="form-group row">
+    <label for="partno2" class="col-sm-2 col-form-label">Part Number</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" name="partno2" placeholder="99999-XX-999">
+    </div>
+  </div>
+  <div class="form-group row">
+    <label for="description2" class="col-sm-2 col-form-label">Description</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" name="description2" placeholder="Thermonuclear Warhhead">
+    </div>
+  </div>
+  <div class="form-group row">
+    <label for="batch2" class="col-sm-2 col-form-label">Batch Quantity</label>
+    <div class="col-sm-10">
+      <input type="number" class="form-control" name="batch2" placeholder="">
+    </div>
+  </div>
+
+    <h1 >Card 3</h1>
+  <div class="form-group row">
+    <label for="partno3" class="col-sm-2 col-form-label">Part Number</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" name="partno3" placeholder="99999-XX-999">
+    </div>
+  </div>
+  <div class="form-group row">
+    <label for="description3" class="col-sm-2 col-form-label">Description</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" name="description3" placeholder="Thermonuclear Warhhead">
+    </div>
+  </div>
+  <div class="form-group row">
+    <label for="batch3" class="col-sm-2 col-form-label">Batch Quantity</label>
+    <div class="col-sm-10">
+      <input type="number" class="form-control" name="batch3" placeholder="1">
+    </div>
+  </div>
+
+    <h1 >Card 4</h1>
+  <div class="form-group row">
+    <label for="partno4" class="col-sm-2 col-form-label">Part Number</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" name="partno4" placeholder="99999-XX-999">
+    </div>
+  </div>
+  <div class="form-group row">
+    <label for="description4" class="col-sm-2 col-form-label">Description</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" name="description4" placeholder="Thermonuclear Warhhead">
+    </div>
+  </div>
+  <div class="form-group row">
+    <label for="batch4" class="col-sm-2 col-form-label">Batch Quantity</label>
+    <div class="col-sm-10">
+      <input type="number" class="form-control" name="batch4" placeholder="1">
+    </div>
+  </div>
+
+  <button type="submit" class="btn btn-primary">Make Cards</button>
+</form>
+
+</div>
+{% endblock %}

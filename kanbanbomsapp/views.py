@@ -22,6 +22,55 @@ from .utils import normalize_partno
 
 from django.http import JsonResponse
 
+from io import BytesIO # barcodes
+
+import barcode
+
+def make_card(request):
+	template = loader.get_template('kanbanbomsapp/cardform.html')
+	context = {	}
+	return HttpResponse(template.render(context, request))
+
+def render_card(request):
+	template = loader.get_template('kanbanbomsapp/card.html')
+	
+	cards = []
+	if request.POST['partno1']:
+		cards.append({
+			'partno' : request.POST['partno1'],
+			'description' : request.POST['description1'],
+			'batch' : request.POST['batch1'],
+		})
+	if request.POST['partno2']:
+		cards.append({
+			'partno' : request.POST['partno2'],
+			'description' : request.POST['description2'],
+			'batch' : request.POST['batch2'],
+		})
+	if request.POST['partno3']:
+		cards.append({
+			'partno' : request.POST['partno3'],
+			'description' : request.POST['description3'],
+			'batch' : request.POST['batch3'],
+		})
+	if request.POST['partno4']:
+		cards.append({
+			'partno' : request.POST['partno4'],
+			'description' : request.POST['description4'],
+			'batch' : request.POST['batch4'],
+		})
+	context = {
+		'cards' : cards
+	}
+	return HttpResponse(template.render(context, request))
+
+def make_barcode(request, text):
+	ean = barcode.codex.Code39(text,add_checksum=False)
+	ean.default_writer_options['write_text'] = False
+	b = BytesIO()
+	ean.write(b)
+	return HttpResponse(b.getvalue(), content_type="image/svg+xml")
+
 def edit_request(request, request_id, error="", partno=""):
 	try:
 		request_object = Request.objects.get(pk=request_id)

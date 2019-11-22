@@ -1,0 +1,48 @@
+
+<style>
+table.card {
+	border: 1px solid black;
+	border-collapse: collapse;
+	width: 100%;
+    -webkit-backface-visibility:visible;
+    border-radius: 0px;
+    width: 7in;
+    margin: 20px;
+
+}
+.card td {
+	border: 1px solid black;
+	padding: 5px;
+}
+.title-row {
+	background: black;
+	color: white;
+	font-size: 18pt;
+	font-weight: bold;
+	font-family: Arial;
+	word-wrap: none;
+}
+.barcode-td {
+	text-align: right;
+}
+td.first-col {
+	width: 100px;
+}
+</style>
+{% for card in cards %}
+<table class="card">
+	<tr class="title-row">
+		<td colspan="2" >{{card.partno}}</td>
+	</tr>
+	<tr>
+		<td class="first-col">Description</td><td>{{card.description}}</td>
+	</tr>
+	<tr>
+		<td>Batch Quantity</td><td>{{card.batch}}</td>
+	</tr>
+	<tr>
+		<td></td>
+		<td class="barcode-td"><img height="150px" src="{% url 'make_barcode' card.partno %}"></td>
+	</tr>
+</table>
+{% endfor %}

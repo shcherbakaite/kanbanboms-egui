@@ -75,7 +75,7 @@ class Command(BaseCommand):
 				#	pprint(BOM.objects.filter(partno=part['partno'])[0])
 				#	pprint(BOM.objects.filter(partno=part['partno'])[1])
 				#else:
-				p = BOM.objects.filter(partno=part['partno']).first()
+				p = BOM.objects.get(partno=part['partno'])
 				be = b.bomentry_set.create(bom=b,part=p,quantity=part['quantity'],disabled=part['disabled'])
 			
 
