@@ -4,13 +4,14 @@
 
 <div class="wrapper">
 <div class="mb-4"><h1 >Make Request</h1></div>
-<form class="form" action="{% url 'edit_request_add' request.id %}" method="post">
+<form id="main_form" class="form" action="{% url 'edit_request_add' request.id %}" method="post">
 	{% csrf_token %}
 	<div class="input-group">
 		<!-- WIP: Autocomplete feature -->
-		<input autofocus="True" autocomplete="off" type="text" class=" basicAutoComplete form-control col-sm-3  {% if partno_validation_error %} is-invalid {% endif %}" name="partno" value="{{ partno }}">
+		<input id="partno_field" autofocus="True" autocomplete="off" type="text" class=" basicAutoComplete form-control col-sm-3  {% if partno_validation_error %} is-invalid {% endif %}" name="partno" value="{{ partno }}">
 		<span class="input-group-btn ml-1">
-			<input class="btn btn-primary" type="submit" value="Add" class="btn btn-primary">
+			<input class="btn btn-primary" type="submit" value="Add" >
+			<input id="myBtn" class="btn btn-secondary" type="submit" value="Find BOM">
 		</span>
 		<div class="invalid-feedback">{{ partno_validation_error }}</div>
 	</div>
@@ -24,7 +25,7 @@
 <table  class="table text-nowrap table-sm">
 	<thead>
 	<tr>
-		<th >Part Number</th>
+		<th>Part Number</th>
 		<th>Description</th>
 		<th>Quantity</th>
 	</tr>
@@ -47,13 +48,86 @@
 {% endif %}
 </div>
 
+<!-- The Modal -->
+<div id="myModal" class="modal">
+
+  <!-- Modal content -->
+  <div class="modal-content">
+  	<div>
+  		<span class="close">&times;</span>
+  		<div class="mb-4"><h2 >Find BOM</h2></div>
+        <form id="filter_form" style="display: inline" class="form" >
+            <input id="filter_text" style="display: inline" autofocus="True" autocomplete="off" type="text" class="form-control col-sm-3" name="partno" value="{{ partno }}">
+        </form>
+        
+    </div>
+    <div id="bom_search_results" class="mt-4 modal-results">
+    	Type in a query...
+    </div>
+    
+  </div>
+
+</div>
+
 <script>
-// WIP: Autocomplete feature
-// $('.basicAutoComplete').autoComplete({
-//     resolverSettings: {
-//         url: "{% url 'edit_request_autocomplete' %}"
-//     }
-// });
+
+// Get the modal
+var modal = document.getElementById("myModal");
+
+// Get the button that opens the modal
+var btn = document.getElementById("myBtn");
+
+// Get the <span> element that closes the modal
+var span = document.getElementsByClassName("close")[0];
+
+var search_results = document.getElementById("bom_search_results");
+
+var filter_text = document.getElementById("filter_text");
+
+var filter_form = document.getElementById("filter_form");
+
+var partno_field = document.getElementById("partno_field");
+
+var main_form = document.getElementById("main_form");
+
+// When the user clicks on the button, open the modal
+btn.onclick = function() {
+  modal.style.display = "block";
+  return false;
+}
+
+// When the user clicks on <span> (x), close the modal
+span.onclick = function() {
+  modal.style.display = "none";
+}
+
+// When the user clicks anywhere outside of the modal, close it
+window.onclick = function(event) {
+  if (event.target == modal) {
+    modal.style.display = "none";
+  }
+} 
+
+filter_text.oninput = function(value) {
+  var oReq = new XMLHttpRequest();
+  oReq.open("GET", "{% url 'edit_request_search' %}?f=" + filter_text.value);
+  oReq.addEventListener("load", function(){
+  	search_results.innerHTML = this.responseText;
+  });
+  oReq.send();
+  return false;
+}
+
+filter_form.onsubmit = function(event) {
+	return false;
+}
+
+search_result_clicked = function(e) {
+	console.log(e.target.getAttribute('partno'))
+	partno_field.value = e.target.getAttribute('partno')
+	main_form.submit()
+}
+
 </script>
 {% endblock %}
 
