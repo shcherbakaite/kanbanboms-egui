@@ -140,6 +140,9 @@ def print_request(request, request_id):
         (_, parts_list) = part_group
         aggregated_parts.append(reduce((lambda a, b: (a[0],a[1],a[2] + b[2])), parts_list))
 
+    # Sort by part number
+    aggregated_parts = sorted(aggregated_parts, key=lambda x: x[0])
+
     template = loader.get_template('kanbanbomsapp/print_request.html')
     context = {
         'request_id': request_id,
