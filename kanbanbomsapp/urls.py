@@ -8,6 +8,7 @@ from django.conf import settings
 
 urlpatterns = [
 	path('', views.index, name='index'),
+	path('editrequest/updateinfo/<int:request_id>', views.update_info, name='update_info'),
 	path('makecard', views.make_card, name='make_card'),
 	path('rendercard', views.render_card, name='render_card'),
 	path('makebarcode/<str:text>', views.make_barcode, name='make_barcode'),

@@ -30,41 +30,88 @@ from django.db.models.functions import Concat
 
 import barcode
 
+import datetime
+
+def update_info(request, request_id):
+    request_object = Request.objects.get(pk=request_id)
+    request_object.requested_by = request.POST['requestedby'];
+    request_object.notes = request.POST['notes'];
+    request_object.machine_number = request.POST['machine'];
+    request_object.save()
+    return HttpResponse(request.POST['machine'])
+
 def make_card(request):
     template = loader.get_template('kanbanbomsapp/cardform.html')
-    context = { }
+
+    # template = loader.get_template('kanbanbomsapp/card.html')
+    
+    # cards = []
+    # if request.POST['partno1']:
+    #     cards.append({
+    #         'partno' : request.POST['partno1'],
+    #         'description' : request.POST['description1'],
+    #         'batch' : request.POST['batch1'],
+    #     })
+    # # if request.POST['partno2']:
+    #     cards.append({
+    #         'partno' : request.POST['partno2'],
+    #         'description' : request.POST['description2'],
+    #         'batch' : request.POST['batch2'],
+    #     })
+    # if request.POST['partno3']:
+    #     cards.append({
+    #         'partno' : request.POST['partno3'],
+    #         'description' : request.POST['description3'],
+    #         'batch' : request.POST['batch3'],
+    #     })
+    # if request.POST['partno4']:
+    #     cards.append({
+    #         'partno' : request.POST['partno4'],
+    #         'description' : request.POST['description4'],
+    #         'batch' : request.POST['batch4'],
+    #     })
+
+
+    context = {
+        'partno' : request.POST.get('partno1', "99999-XX-999"),
+        'description' : request.POST.get('description1', "Part Description"),
+        'batch' : request.POST.get('batch1', "1")
+    }
+    
     return HttpResponse(template.render(context, request))
 
 def render_card(request):
     template = loader.get_template('kanbanbomsapp/card.html')
     
-    cards = []
-    if request.POST['partno1']:
-        cards.append({
-            'partno' : request.POST['partno1'],
-            'description' : request.POST['description1'],
-            'batch' : request.POST['batch1'],
-        })
-    if request.POST['partno2']:
-        cards.append({
-            'partno' : request.POST['partno2'],
-            'description' : request.POST['description2'],
-            'batch' : request.POST['batch2'],
-        })
-    if request.POST['partno3']:
-        cards.append({
-            'partno' : request.POST['partno3'],
-            'description' : request.POST['description3'],
-            'batch' : request.POST['batch3'],
-        })
-    if request.POST['partno4']:
-        cards.append({
-            'partno' : request.POST['partno4'],
-            'description' : request.POST['description4'],
-            'batch' : request.POST['batch4'],
-        })
+    # cards = []
+    # if request.POST['partno1']:
+    #     cards.append({
+    #         'partno' : request.POST['partno1'],
+    #         'description' : request.POST['description1'],
+    #         'batch' : request.POST['batch1'],
+    #     })
+    # # if request.POST['partno2']:
+    #     cards.append({
+    #         'partno' : request.POST['partno2'],
+    #         'description' : request.POST['description2'],
+    #         'batch' : request.POST['batch2'],
+    #     })
+    # if request.POST['partno3']:
+    #     cards.append({
+    #         'partno' : request.POST['partno3'],
+    #         'description' : request.POST['description3'],
+    #         'batch' : request.POST['batch3'],
+    #     })
+    # if request.POST['partno4']:
+    #     cards.append({
+    #         'partno' : request.POST['partno4'],
+    #         'description' : request.POST['description4'],
+    #         'batch' : request.POST['batch4'],
+    #     })
     context = {
-        'cards' : cards
+        'partno' : request.POST['partno1'],
+        'description' : request.POST['description1'],
+        'batch' : request.POST['batch1'],
     }
     return HttpResponse(template.render(context, request))
 
@@ -146,8 +193,10 @@ def print_request(request, request_id):
     template = loader.get_template('kanbanbomsapp/print_request.html')
     context = {
         'request_id': request_id,
+        'request' : request_object,
         'assemblies' : entries,
         'parts' : aggregated_parts,
+        'date' : datetime.date.today().strftime('%m/%d/%Y')
     }
     return HttpResponse(template.render(context, request))
 

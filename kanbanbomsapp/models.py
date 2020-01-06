@@ -15,7 +15,10 @@ class BOMEntry(models.Model):
 	def __str__(self):
 		return self.bom.partno + " -> " + self.part.partno + " x" + str(self.quantity)
 
-class Request(models.Model):pass
+class Request(models.Model):
+	requested_by = models.CharField(max_length=25, default="")
+	machine_number = models.CharField(max_length=25, default="")
+	notes = models.CharField(max_length=200, default="")
 
 class RequestEntry(models.Model):
 	request = models.ForeignKey(Request, on_delete=models.CASCADE)

@@ -9,9 +9,35 @@
 	</div>
 
 <h1>Part Request</h1>
+<table class="">
+	<tbody>
+		<tr>
+			<th class="pr-2" scope="col" style="width: auto;white-space: nowrap">Date:</th>
+			<td style="width: 100%">{{ date }}</td>
+		</tr>
+		{% if request.requested_by %}
+		<tr>
+			<th class="pr-2" style="width: auto;white-space: nowrap">Requested By:</th>
+			<td>{{ request.requested_by }}</td>
+		</tr>
+		{% endif %}
+		{% if request.machine_number %}
+		<tr>
+			<th class="pr-2" style="width: auto;white-space: nowrap">Machine #:</th>
+			<td>{{ request.machine_number }}</td>
+		</tr>
+		{% endif %}
+		{% if request.notes %}
+		<tr>
+			<th class="pr-2" style="width: auto;white-space: nowrap; vertical-align:top">Notes:</th>
+			<td>{{ request.notes }}</td>
+		</tr>
+		{% endif %}
+	</tbody>
+
+</table>
 
 <h2 class="mt-2">Assemblies</h2>
-
 	<table class="pr-assemblies-table">
 		<tbody>
 		{% for assembly in assemblies %}
