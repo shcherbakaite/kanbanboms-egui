@@ -32,21 +32,5 @@
 
 </div>
 
-<div class="pr-wrapper">
-<table class="card">
-  <tr class="title-row">
-    <td colspan="2" >{{ partno }}</td>
-  </tr>
-  <tr>
-    <td class="first-col">Description</td><td>{{ description }}</td>
-  </tr>
-  <tr>
-    <td>Batch Quantity</td><td>{{ batch }}</td>
-  </tr>
-  <tr>
-    <td></td>
-    <td class="barcode-td"><img height="220px" src="{% url 'make_barcode' partno %}"></td>
-  </tr>
-</table>
-</div>
+<iframe frameborder="0" allowtransparency="true" scrolling="no" src="{% url 'render_card' %}?p={{ partno }}&d={{ description }}&b={{ batch }}"></iframe>
 {% endblock %}

@@ -109,9 +109,9 @@ def render_card(request):
     #         'batch' : request.POST['batch4'],
     #     })
     context = {
-        'partno' : request.POST['partno1'],
-        'description' : request.POST['description1'],
-        'batch' : request.POST['batch1'],
+        'partno' : request.GET['p'],
+        'description' : request.GET['d'],
+        'batch' : request.GET['b'],
     }
     return HttpResponse(template.render(context, request))
 

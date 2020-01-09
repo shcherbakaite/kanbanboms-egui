@@ -6,7 +6,7 @@ table.card {
 	width: 100%;
     -webkit-backface-visibility:visible;
     border-radius: 0px;
-    width: 7in;
+    width: 8.5in;
     margin: 20px;
 
 }
@@ -15,7 +15,7 @@ table.card {
 	padding: 5px;
 }
 .title-row {
-	background: black;
+	background: #3b7bff;
 	color: white;
 	font-size: 18pt;
 	font-weight: bold;
@@ -29,20 +29,18 @@ td.first-col {
 	width: 100px;
 }
 </style>
-{% for card in cards %}
 <table class="card">
 	<tr class="title-row">
-		<td colspan="2" >{{card.partno}}</td>
+		<td colspan="2" >{{partno}}</td>
 	</tr>
 	<tr>
-		<td class="first-col">Description</td><td>{{card.description}}</td>
+		<td class="first-col">Description</td><td>{{description}}</td>
 	</tr>
 	<tr>
-		<td>Batch Quantity</td><td>{{card.batch}}</td>
+		<td>Batch Quantity</td><td>{{batch}}</td>
 	</tr>
 	<tr>
 		<td></td>
-		<td class="barcode-td"><img height="150px" src="{% url 'make_barcode' card.partno %}"></td>
+		<td class="barcode-td"><img height="220px" src="{% url 'make_barcode' partno %}"></td>
 	</tr>
 </table>
-{% endfor %}
