@@ -1,0 +1,23 @@
+{% extends 'kanbanbomsapp/base.html' %}
+
+{% block content %}
+
+<div class="wrapper">
+<div class="content-wrapper ">
+<div class="mb-4"><h1 >Scan Badge</h1></div>
+
+<form id="main_form" class="form" action="{% url 'scan_card' %}" method="post">
+	{% csrf_token %}
+	<div class="input-group">
+		<!-- WIP: Autocomplete feature -->
+		<input id="partno_field" autofocus="True" autocomplete="off" type="text" class=" basicAutoComplete form-control col-sm-3" name="badge" value="{{ partno }}">
+		<span class="input-group-btn ml-1">
+			<input class="btn btn-primary" type="submit" value="Submit" >
+		</span>
+	</div>
+	
+</form>
+
+</div>
+</div>
+{% endblock %}
