@@ -32,6 +32,17 @@ import barcode
 
 import datetime
 
+def scan_badge(request):
+    template = loader.get_template('kanbanbomsapp/scanbadge.html')
+    return HttpResponse(template.render({}, request))
+
+def scan_card(request):
+    template = loader.get_template('kanbanbomsapp/scancard.html')
+    context = {
+      'badge' : request.POST['badge']
+    }
+    return HttpResponse(template.render(context, request))
+
 def update_info(request, request_id):
     request_object = Request.objects.get(pk=request_id)
     request_object.requested_by = request.POST['requestedby'];
