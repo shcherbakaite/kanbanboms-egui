@@ -238,7 +238,7 @@ def print_request(request, request_id):
         'request' : request_object,
         'assemblies' : entries,
         'parts' : aggregated_parts,
-        'date' : datetime.date.today().strftime('%m/%d/%Y')
+        'date' : datetime.today().strftime('%m/%d/%Y')
     }
     return HttpResponse(template.render(context, request))
 
