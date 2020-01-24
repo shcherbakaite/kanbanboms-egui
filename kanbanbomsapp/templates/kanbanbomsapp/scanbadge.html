@@ -6,7 +6,7 @@
 <div class="content-wrapper ">
 <div class="mb-4"><h1 >Scan Badge</h1></div>
 
-<form id="main_form" class="form" action="{% url 'scan_card' %}" method="post">
+<form id="main_form" class="form" action="{% url 'scan_badge' %}" method="post">
 	{% csrf_token %}
 	<div class="input-group">
 		<!-- WIP: Autocomplete feature -->
@@ -19,5 +19,9 @@
 </form>
 
 </div>
+
+<footer class="ml-2 ">
+	<a class="" href="{% url 'tally_csv' %}">Export CSV</a>
+</footer>
 </div>
 {% endblock %}

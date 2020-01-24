@@ -4,6 +4,8 @@ from django.http import HttpResponse, HttpResponseRedirect
 
 from .models import Request, RequestEntry, BOM, BOMEntry
 
+from .models import TallyEntry
+
 from django.template import loader
 
 from django.http import Http404
@@ -18,7 +20,7 @@ from collections import defaultdict
 
 from functools import reduce
 
-from .utils import normalize_partno
+from .utils import normalize_partno, normalize_cardno
 
 from django.http import JsonResponse
 
@@ -32,16 +34,45 @@ import barcode
 
 import datetime
 
-def scan_badge(request):
+from datetime import datetime
+
+import csv
+
+def tally(request):
     template = loader.get_template('kanbanbomsapp/scanbadge.html')
     return HttpResponse(template.render({}, request))
+
+def scan_badge(request):
+    template = loader.get_template('kanbanbomsapp/scancard.html')
+    context = {
+      'badge' : request.POST['badge']
+    }
+    return HttpResponse(template.render(context, request))
 
 def scan_card(request):
     template = loader.get_template('kanbanbomsapp/scancard.html')
     context = {
       'badge' : request.POST['badge']
     }
+    tally = TallyEntry.objects.create(timestamp=datetime.now())
+    tally.badge = request.POST['badge']
+    tally.partno = normalize_partno(request.POST['partno'])
+    tally.cardno = normalize_cardno(request.POST['partno'])
+    tally.save()
     return HttpResponse(template.render(context, request))
+
+def tally_csv(request):
+    # Create the HttpResponse object with the appropriate CSV header.
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = 'attachment; filename="kanbantally.csv"'
+
+    writer = csv.writer(response)
+
+    # writer.writerow(['Badge', 'Part Number', 'Card Number', 'Date', 'Time'])
+    for entry in TallyEntry.objects.all():
+        writer.writerow([entry.badge, entry.partno, entry.cardno, str(entry.timestamp.date()), str(entry.timestamp.time().strftime("%H:%M:%S"))])
+
+    return response
 
 def update_info(request, request_id):
     request_object = Request.objects.get(pk=request_id)

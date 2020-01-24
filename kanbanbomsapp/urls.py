@@ -9,6 +9,8 @@ from django.conf import settings
 urlpatterns = [
 	path('', views.index, name='index'),
 	path('editrequest/updateinfo/<int:request_id>', views.update_info, name='update_info'),
+	path('tally', views.tally, name='tally'),
+	path('tallycsv', views.tally_csv, name='tally_csv'),
 	path('scanbadge', views.scan_badge, name='scan_badge'),
 	path('makecard', views.make_card, name='make_card'),
 	path('scancard', views.scan_card, name='scan_card'),

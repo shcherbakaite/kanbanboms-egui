@@ -4,7 +4,7 @@
 
 <div class="wrapper">
 <div class="content-wrapper ">
-	<form id="back_form" action="{% url 'scan_badge' %}" method="get" > {% csrf_token %} </form>
+	<form id="back_form" action="{% url 'tally' %}" method="post" > {% csrf_token %} </form>
 	
 <div class="mb-4"><h1 >Scanning out as {{ badge }}</h1></div>
 
@@ -22,6 +22,12 @@
 	
 </form>
 
+
 </div>
+
+
+<footer class="ml-2 ">
+	<a class="" href="{% url 'tally_csv' %}">Export CSV</a>
+</footer>
 </div>
 {% endblock %}

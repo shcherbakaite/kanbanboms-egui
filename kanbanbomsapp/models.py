@@ -24,3 +24,9 @@ class RequestEntry(models.Model):
 	request = models.ForeignKey(Request, on_delete=models.CASCADE)
 	part = models.ForeignKey(BOM, on_delete=models.CASCADE)
 	quantity = models.IntegerField(default=0)
+
+class TallyEntry(models.Model):
+	badge = models.CharField(max_length=25)
+	partno = models.CharField(max_length=25)
+	cardno = models.CharField(max_length=25)
+	timestamp = models.DateTimeField()
