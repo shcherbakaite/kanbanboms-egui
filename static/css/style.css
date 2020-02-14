@@ -1,0 +1,252 @@
+
+.partno-span {
+	max-width: 400px;
+}
+
+@media print {
+.printed.table > tbody > tr:nth-child(odd) td {
+background-color: #dee2e6 !important;
+-webkit-print-color-adjust: exact;
+}
+}
+
+.pr-table {
+	border: 1px solid black;
+	border-collapse: collapse;
+	table-layout: fixed;
+	width: 100%;
+    -webkit-backface-visibility:visible;
+
+}
+
+
+/* prevent overflow of description */
+.pr-table td.text span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    max-width: 100%;
+
+}
+
+.pr-table th {
+	border: 1px solid black;
+	padding: 5px;
+}
+
+.pr-table td {
+	border: 1px solid black;
+	padding: 5px;
+
+}
+
+.pr-table thead th:nth-child(1) {
+  width: 130px;
+}
+
+.pr-table thead th:nth-child(2) {
+  width: auto;
+}
+
+.pr-table thead th:nth-child(3) {
+  width: 75px;
+}
+
+.pr-table tbody tr:nth-child(odd) {
+  background-color: #e3e3e3;
+}
+
+.pr-table tr th:nth-child(1) {
+  text-align: center;
+}
+
+.pr-table tr td:nth-child(1) {
+  text-align: center;
+}
+
+.pr-table tr th:nth-child(3) {
+  text-align: center;
+}
+
+.pr-table tr td:nth-child(3) {
+  text-align: center;
+}
+
+.pr-assemblies-table {
+	width: 100%;
+	table-layout: fixed;
+}
+
+.pr-assemblies-table tr td:nth-child(1) {
+	width: 45px;
+}
+
+.pr-assemblies-table tr td:nth-child(2) {
+	width: 125px;
+}
+
+.pr-assemblies-table td.text span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    width: auto;
+    max-width: 100%;
+}
+
+.table {
+	width: 100%;
+	table-layout: fixed;
+}
+
+.table thead th:nth-child(1) {
+  width: 150px;
+}
+
+.table thead th:nth-child(2) {
+  width: auto;
+}
+
+.table thead th:nth-child(3) {
+  width: 150px;
+}
+
+.table td.text span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    width: auto;
+    max-width: 100%;
+}
+
+.content-wrapper {
+	padding: 10px;
+	margin: 10px;
+}
+
+.wrapper {
+	/*Sticky footer*/
+	height: 100%;
+	min-height: 100%;
+    display: grid;
+    grid-template-rows: 1fr auto;
+}
+
+.pr-wrapper {
+	padding: 10px;
+	margin:0 auto;
+	width: 8.5in;
+}
+
+@media print {
+	.pr-buttons {
+		display: none;
+	}
+
+	.pr-wrapper {
+		width: 95%;
+		margin: auto;
+		padding: auto;
+	}
+}
+
+ /* The Modal (background) */
+.modal {
+  display: none; /* Hidden by default */
+  position: fixed; /* Stay in place */
+  z-index: 1; /* Sit on top */
+  left: 0;
+  top: 0;
+  width: 100%; /* Full width */
+  height: 100%; /* Full height */
+  overflow: auto; /* Enable scroll if needed */
+  background-color: rgb(0,0,0); /* Fallback color */
+  background-color: rgba(0,0,0,0.4); /* Black w/ opacity */
+}
+
+/* Modal Content/Box */
+.modal-content {
+  background-color: #fefefe;
+  margin: 5% auto; /* 15% from the top and centered */
+  padding: 20px;
+  border: 1px solid #888;
+  width: 90%; /* Could be more or less, depending on screen size */
+  height: 80%;
+  /*overflow: auto;*/
+  /*display: flex; 
+  flex-direction: column; */
+}
+
+/* The Close Button */
+.close {
+/*	width: 100px;
+  right: 0;*/
+
+  color: #aaa;
+  float: right;
+  font-size: 28px;
+  font-weight: bold;
+}
+
+.close:hover,
+.close:focus {
+  color: black;
+  text-decoration: none;
+  cursor: pointer;
+} 
+
+.modal-results {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/*table.card {
+  display: table;
+  border: 1px solid black;
+  border-collapse: collapse;
+    -webkit-backface-visibility:visible;
+    border-radius: 0px;
+    width: 8.5in;
+    margin: 20px;
+
+}
+
+@media print {
+table.card {
+	width: 8.5in;
+
+}
+}
+
+.card td {
+  border: 1px solid black;
+  padding: 5px;
+  /*display: block;*/
+/*}
+.title-row {
+  background: black;
+  color: white;
+  font-size: 18pt;
+  font-weight: bold;
+  font-family: Arial;
+  word-wrap: none;
+}
+.barcode-td {
+  text-align: right;
+}
+td.first-col {
+  width: 100px;
+}
+*/
+
+iframe{
+    background-color: transparent;
+    border: 0px none transparent;
+    padding: 0px;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+
+}
