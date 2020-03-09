@@ -25,7 +25,7 @@ SECRET_KEY = '4&*^x%!y-*=2q1j6(&a3^v(=zicr+w4x($gz4j*0pa&n*wmg&3'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['138.68.242.73', '127.0.0.1', 'vlsh-q505uar', 'kanbanboms']
+ALLOWED_HOSTS = ['138.68.242.73', '127.0.0.1', 'vlsh-q505uar', 'kanbanboms', '192.168.6.187']
 
 
 # Application definition
@@ -126,3 +126,5 @@ USE_TZ = True
 STATIC_URL = '/static/'
 
 STATIC_ROOT = os.path.join(BASE_DIR, "static/")
+
+X_FRAME_OPTIONS = 'ALLOW-FROM http://kanbanboms:8000/'
