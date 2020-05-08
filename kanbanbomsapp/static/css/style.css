@@ -49,7 +49,12 @@ background-color: #dee2e6 !important;
   width: auto;
 }
 
+
 .pr-table thead th:nth-child(3) {
+  width: 130px;
+}
+
+.pr-table thead th:nth-child(4) {
   width: 75px;
 }
 
@@ -70,6 +75,14 @@ background-color: #dee2e6 !important;
 }
 
 .pr-table tr td:nth-child(3) {
+  text-align: center;
+}
+
+.pr-table tr th:nth-child(4) {
+  text-align: center;
+}
+
+.pr-table tr td:nth-child(4) {
   text-align: center;
 }
 

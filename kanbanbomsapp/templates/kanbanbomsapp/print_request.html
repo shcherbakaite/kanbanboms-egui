@@ -8,7 +8,7 @@
 		<input type="submit" value="Back" form="back_form" class="btn btn-secondary mr-1"><input type="button" onclick="window.print();" value="Print" form="print_form" class="btn btn-primary">
 	</div>
 
-<h1>Part Request</h1>
+<h1>Kitting BOM</h1>
 <table class="">
 	<tbody>
 		<tr>
@@ -54,6 +54,7 @@
 	<tr>
 		<th>Part Number</th>
 		<th>Description</th>
+		<th>Location</th>
 		<th>Quantity</th>
 	</tr>
 	</thead>
@@ -62,6 +63,7 @@
     <tr>
     	<td class="text"><span>{{ part.0 }}</span></td> 
     	<td class="text"><span>{{ part.1 }}</span></td> 
+    	<td class="text"><span>No Location</span></td>
     	<td>{{ part.2 }}</td>
     </tr>
     {% endfor %}
