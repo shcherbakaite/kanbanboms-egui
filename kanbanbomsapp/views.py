@@ -74,6 +74,12 @@ def tally_csv(request):
 
     return response
 
+def edit_location(request, request_id):
+    bom = BOM.objects.get(partno=normalize_partno(request.POST['partno']))
+    bom.location = request.POST['location']
+    bom.save()
+    return HttpResponseRedirect(reverse('print_request', args=(request_id,)))
+
 def update_info(request, request_id):
     request_object = Request.objects.get(pk=request_id)
     request_object.requested_by = request.POST['requestedby'];
@@ -202,6 +208,7 @@ def update_request(request, request_id):
     for request_entry in request_object.requestentry_set.all():
         request_entry.quantity = request.POST[request_entry.part.partno]
         request_entry.save()
+    RequestEntry.objects.filter(quantity=0).delete() # remove entries with zero quantities
     return HttpResponseRedirect(reverse('edit_request', args=(request_id,)))
 
 def print_request(request, request_id):
@@ -217,17 +224,17 @@ def print_request(request, request_id):
         for bom_entry in request_entry.part.bomentry_set.all():
             quantity = request_entry.quantity*bom_entry.quantity*(not bom_entry.disabled)
             if quantity:
-                parts.append((bom_entry.part.partno, bom_entry.part.description, quantity));
+                parts.append((bom_entry.part.partno, bom_entry.part.description, quantity, bom_entry.part.location));
 
     parts_groups = defaultdict(list)
     for part in parts:
-        (partno,_,_) = part
+        (partno,_,_, _) = part
         parts_groups[partno].append(part)
 
     aggregated_parts = []
     for part_group in parts_groups.items():
         (_, parts_list) = part_group
-        aggregated_parts.append(reduce((lambda a, b: (a[0],a[1],a[2] + b[2])), parts_list))
+        aggregated_parts.append(reduce((lambda a, b: (a[0],a[1],a[2] + b[2], a[3])), parts_list)) # partno, description, quantity, location
 
     # Sort by part number
     aggregated_parts = sorted(aggregated_parts, key=lambda x: x[0])

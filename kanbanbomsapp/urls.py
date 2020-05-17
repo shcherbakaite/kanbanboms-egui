@@ -12,6 +12,7 @@ urlpatterns = [
 	path('tally', views.tally, name='tally'),
 	path('tallycsv', views.tally_csv, name='tally_csv'),
 	path('scanbadge', views.scan_badge, name='scan_badge'),
+	path('edit_location/<int:request_id>', views.edit_location, name='edit_location'),
 	path('makecard', views.make_card, name='make_card'),
 	path('scancard', views.scan_card, name='scan_card'),
 	path('rendercard', views.render_card, name='render_card'),

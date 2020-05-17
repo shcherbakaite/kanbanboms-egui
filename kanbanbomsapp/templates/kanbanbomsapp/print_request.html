@@ -63,11 +63,73 @@
     <tr>
     	<td class="text"><span>{{ part.0 }}</span></td> 
     	<td class="text"><span>{{ part.1 }}</span></td> 
-    	<td class="text"><span>No Location</span></td>
+    	<td class="text">
+    		<span> <button partno="{{ part.0 }}" onclick='location_clicked(event, "{{part.3}}")' class="btn-loc" href="">
+    		{% if part.3 %}
+    			{{part.3}}
+    		{% else %}
+    			N/A
+    		{% endif %}
+    		</span>
+    	</td>
     	<td>{{ part.2 }}</td>
     </tr>
     {% endfor %}
 	</tbody>
 </table>
+<div class="pr-buttons" style="font-style: italic;">
+		* Click on location to edit it
+	</div>
 </div>
+
+<!-- The Modal -->
+<div id="location-modal-id" class="modal">
+
+  <!-- Modal content -->
+  <div class="modal-content modal-location ">
+  	<div>
+  		<span class="close" id="close-btn">&times;</span>
+  		<div class="mb-4"><h2 >Edit Location</h2></div>
+        <form id="filter_form" style="display: inline" class="form" action="{% url 'edit_location' request_id %}" method="post">
+        	{% csrf_token %}
+            <div class="form-group">
+            	<input type="hidden" id="partno-field" name="partno">
+		    	<input autofocus="True" autocomplete="off"  type="text" maxlength="15" class="form-control" id="location-field" name="location" placeholder="N/A">
+		    	<small id="emailHelp" class="form-text text-muted">This will be saved so you won't have to enter it ever again</small>
+		  	</div>
+		  	<button onclick="cancel_clicked(event)" type="button" class="btn btn-danger ">Basta!</button> <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+        
+    </div>
+    
+  </div>
+
+</div>
+
+<script type="text/javascript">
+	// Get the modal
+	var modal = document.getElementById("location-modal-id");
+	var partno_field = document.getElementById("partno-field");
+	var location_field = document.getElementById("location-field");
+	var close_btn = document.getElementById("close-btn");
+
+	function location_clicked(e, l){
+		modal.style.display = "block";
+		partno_field
+		partno_field.value = e.target.getAttribute('partno')
+		location_field.value = l;
+		location_field.focus();
+	}
+	
+	function cancel_clicked(e){
+		modal.style.display = "none";
+		return false;
+	}
+
+	close_btn.onclick = cancel_clicked;
+
+</script>
+
+
+
 {% endblock %}

@@ -1,3 +1,7 @@
+.noscroll {
+  
+  overflow: hidden;
+}
 
 .partno-span {
 	max-width: 400px;
@@ -163,7 +167,22 @@ background-color: #dee2e6 !important;
 		margin: auto;
 		padding: auto;
 	}
+
+
 }
+
+.btn-loc {
+  color: black;
+  background: none;
+  border: none;
+  padding: 0px;
+}
+
+.btn-loc:hover {
+  text-decoration: underline;
+}
+
+.btn-loc:focus { outline: none; }
 
  /* The Modal (background) */
 .modal {
@@ -174,7 +193,7 @@ background-color: #dee2e6 !important;
   top: 0;
   width: 100%; /* Full width */
   height: 100%; /* Full height */
-  overflow: auto; /* Enable scroll if needed */
+  overflow: clip; /* Enable scroll if needed */
   background-color: rgb(0,0,0); /* Fallback color */
   background-color: rgba(0,0,0,0.4); /* Black w/ opacity */
 }
@@ -185,11 +204,23 @@ background-color: #dee2e6 !important;
   margin: 5% auto; /* 15% from the top and centered */
   padding: 20px;
   border: 1px solid #888;
-  width: 90%; /* Could be more or less, depending on screen size */
-  height: 80%;
+/*  width: 90%; 
+  height: 80%;*/
+  /*width: 90%;  Could be more or less, depending on screen size 
+  height: 80%;*/
   /*overflow: auto;*/
   /*display: flex; 
   flex-direction: column; */
+}
+
+.modal-find {
+  width: 90%; /* Could be more or less, depending on screen size */
+  height: 80%;
+}
+
+.modal-location {
+  width: 400px;
+  height: auto;
 }
 
 /* The Close Button */

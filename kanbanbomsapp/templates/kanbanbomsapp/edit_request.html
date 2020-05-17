@@ -3,9 +3,9 @@
 {% block content %}
 <div class="wrapper">
 <div class="content-wrapper ">
-<div class="mb-4"><h1 >Make Request</h1></div>
+<div class="mb-4"><h1 >Kanban BOMs</h1></div>
 
-<div class="card border-primary  mb-3" style="">
+<div class="card border-primary  mb-3" style="display: none;">
   <div class="card-header bg-transparent">Request Info(Optional)</div>
   <div class="card-body ">
 
@@ -47,7 +47,7 @@
 		<input id="partno_field" autofocus="True" autocomplete="off" type="text" class=" basicAutoComplete form-control col-sm-3  {% if partno_validation_error %} is-invalid {% endif %}" name="partno" value="{{ partno }}">
 		<span class="input-group-btn ml-1">
 			<input class="btn btn-primary" type="submit" value="Add" >
-			<input id="myBtn" class="btn btn-secondary" type="submit" value="Find BOM">
+			<input id="find-btn" class="btn btn-secondary" type="submit" value="Find BOM">
 		</span>
 		<div class="invalid-feedback">{{ partno_validation_error }}</div>
 	</div>
@@ -105,10 +105,10 @@
 
 
 <!-- The Modal -->
-<div id="myModal" class="modal">
+<div id="find-modal-id" class="modal">
 
   <!-- Modal content -->
-  <div class="modal-content">
+  <div class="modal-content modal-find">
   	<div>
   		<span class="close">&times;</span>
   		<div class="mb-4"><h2 >Find BOM</h2></div>
@@ -128,10 +128,10 @@
 <script>
 
 // Get the modal
-var modal = document.getElementById("myModal");
+var modal = document.getElementById("find-modal-id");
 
 // Get the button that opens the modal
-var btn = document.getElementById("myBtn");
+var btn = document.getElementById("find-btn");
 
 // Get the <span> element that closes the modal
 var span = document.getElementsByClassName("close")[0];
@@ -157,6 +157,7 @@ var update_info_form = document.getElementById("update_info_form");
 // When the user clicks on the button, open the modal
 btn.onclick = function() {
   modal.style.display = "block";
+  filter_text.focus();
   return false;
 }
 
@@ -166,7 +167,7 @@ span.onclick = function() {
 }
 
 // When the user clicks anywhere outside of the modal, close it
-window.onclick = function(event) {
+window.onmousedown = function(event) { // changed it from click so that the modal doesn't disappear when drag/release sometimes, very annoying
   if (event.target == modal) {
     modal.style.display = "none";
   }
