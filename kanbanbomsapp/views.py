@@ -74,6 +74,57 @@ def tally_csv(request):
 
     return response
 
+
+def get_aggregated_parts(request_id):
+    request_object = Request.objects.get(pk=request_id)
+    
+    merged_bomsets = BOMEntry.objects.none()
+
+    entries = request_object.requestentry_set.all()
+
+    parts = []
+
+    for request_entry in request_object.requestentry_set.all():
+        for bom_entry in request_entry.part.bomentry_set.all():
+            quantity = request_entry.quantity*bom_entry.quantity*(not bom_entry.disabled)
+            if quantity:
+                parts.append((bom_entry.part.partno, bom_entry.part.description, quantity, bom_entry.part.location));
+
+    parts_groups = defaultdict(list)
+    for part in parts:
+        (partno,_,_, _) = part
+        parts_groups[partno].append(part)
+
+    aggregated_parts = []
+    for part_group in parts_groups.items():
+        (_, parts_list) = part_group
+        aggregated_parts.append(reduce((lambda a, b: (a[0],a[1],a[2] + b[2], a[3])), parts_list)) # partno, description, quantity, location
+
+    # Sort by part number
+    aggregated_parts = sorted(aggregated_parts, key=lambda x: x[0])
+
+    return aggregated_parts
+
+
+def csv_export(request, request_id):
+    # Create the HttpResponse object with the appropriate CSV header.
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = 'attachment; filename="kanbantally.csv"'
+
+    writer = csv.writer(response)
+
+    aggregated_parts = get_aggregated_parts(request_id);
+
+    writer.writerow(["Part Number", "Description", "Quantity"])
+    for part in aggregated_parts:
+       writer.writerow([part[0], part[1], part[2]])
+
+    return response
+
+
+
+
+
 def edit_location(request, request_id):
     bom = BOM.objects.get(partno=normalize_partno(request.POST['partno']))
     bom.location = request.POST['location']
@@ -218,26 +269,8 @@ def print_request(request, request_id):
 
     entries = request_object.requestentry_set.all()
 
-    parts = []
-
-    for request_entry in request_object.requestentry_set.all():
-        for bom_entry in request_entry.part.bomentry_set.all():
-            quantity = request_entry.quantity*bom_entry.quantity*(not bom_entry.disabled)
-            if quantity:
-                parts.append((bom_entry.part.partno, bom_entry.part.description, quantity, bom_entry.part.location));
-
-    parts_groups = defaultdict(list)
-    for part in parts:
-        (partno,_,_, _) = part
-        parts_groups[partno].append(part)
-
-    aggregated_parts = []
-    for part_group in parts_groups.items():
-        (_, parts_list) = part_group
-        aggregated_parts.append(reduce((lambda a, b: (a[0],a[1],a[2] + b[2], a[3])), parts_list)) # partno, description, quantity, location
-
     # Sort by part number
-    aggregated_parts = sorted(aggregated_parts, key=lambda x: x[0])
+    aggregated_parts = get_aggregated_parts(request_id)
 
     template = loader.get_template('kanbanbomsapp/print_request.html')
     context = {

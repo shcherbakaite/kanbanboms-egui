@@ -5,7 +5,10 @@
 <div class="pr-wrapper">
 	<div class="pr-buttons mb-4">
 		<form id="back_form" action="{% url 'edit_request' request_id %}" method="get" > {% csrf_token %} </form>
+		<form id="to_csv_form" action="{% url 'csv_export' request_id %}" method="get" > {% csrf_token %} </form>
 		<input type="submit" value="Back" form="back_form" class="btn btn-secondary mr-1"><input type="button" onclick="window.print();" value="Print" form="print_form" class="btn btn-primary">
+		<input type="submit" value="Export To CSV" form="to_csv_form" class="btn btn-secondary mr-1">
+
 	</div>
 
 <h1>Kitting BOM</h1>
@@ -79,7 +82,8 @@
 </table>
 <div class="pr-buttons" style="font-style: italic;">
 		* Click on location to edit it
-	</div>
+</div>
+
 </div>
 
 <!-- The Modal -->
@@ -97,7 +101,7 @@
 		    	<input autofocus="True" autocomplete="off"  type="text" maxlength="15" class="form-control" id="location-field" name="location" placeholder="N/A">
 		    	<small id="emailHelp" class="form-text text-muted">This will be saved so you won't have to enter it ever again</small>
 		  	</div>
-		  	<button onclick="cancel_clicked(event)" type="button" class="btn btn-danger ">Basta!</button> <button type="submit" class="btn btn-primary">Save</button>
+		  	<button onclick="cancel_clicked(event)" type="button" class="btn btn-danger ">Cancel</button> <button type="submit" class="btn btn-primary">Save</button>
         </form>
         
     </div>

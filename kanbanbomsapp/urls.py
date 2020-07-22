@@ -24,4 +24,6 @@ urlpatterns = [
     path('clearrequest/<int:request_id>', views.clear_request, name='clear_request'),
     path('printrequest/<int:request_id>', views.print_request, name='print_request'),
     path('updaterequest/<int:request_id>', views.update_request, name='update_request'),
+    path('csv_export/<int:request_id>', views.csv_export, name='csv_export')
+    
 ]
