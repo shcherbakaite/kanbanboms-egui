@@ -320,4 +320,12 @@ def create_request(request):
 def index(request):
     return HttpResponseRedirect(reverse('create_request'))
 
-
+def copy(request, src_part, dst_part):
+    src = BOM.objects.get(partno__iexact=src_part)
+    dst = BOM.objects.get(partno__iexact=dst_part)
+    for srcbomentry in src.bomentry_set.all():
+        pprint(srcbomentry.part.partno);
+        e = BOMEntry.objects.create(bom=dst,part=srcbomentry.part, quantity=srcbomentry.quantity, disabled=srcbomentry.disabled)
+        dst.bomentry_set.add(e);
+    dst.save()
+    return HttpResponse('')
