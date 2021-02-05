@@ -101,7 +101,7 @@ def get_aggregated_parts(request_id):
         aggregated_parts.append(reduce((lambda a, b: (a[0],a[1],a[2] + b[2], a[3])), parts_list)) # partno, description, quantity, location
 
     # Sort by part number
-    aggregated_parts = sorted(aggregated_parts, key=lambda x: x[0])
+    aggregated_parts = sorted(aggregated_parts, key=lambda x: (x[3], x[0]))
 
     return aggregated_parts
 
