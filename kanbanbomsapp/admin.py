@@ -15,10 +15,10 @@ class BOMAdmin(admin.ModelAdmin):
 	inlines = [
 		BOMEntryInline,
 	]
-	class Media:
-		css = {
-			'all': ('css/custom_admin.css', )     # Include extra css to hide titles over each entry
-		}
+	# class Media:
+	# 	css = {
+	# 		'all': ('css/custom_admin.css', )     # Include extra css to hide titles over each entry
+	# 	}
 
 admin.site.register(BOM, BOMAdmin)
 #admin.site.register(BOMEntry)

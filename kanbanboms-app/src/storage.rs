@@ -108,6 +108,7 @@ pub fn parse_csv_import(csv_text: &str) -> Result<StoredData, String> {
                 part_id: comp_id,
                 quantity: qty,
                 disabled,
+                tags: Vec::new(),
             });
         }
     }

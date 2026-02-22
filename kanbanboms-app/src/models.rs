@@ -17,6 +17,8 @@ pub struct BomEntry {
     pub part_id: Uuid,
     pub quantity: i32,
     pub disabled: bool,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -53,8 +55,8 @@ pub fn normalize_partno(partno: &str) -> String {
     String::new()
 }
 
-/// Aggregated part for print/export: (partno, description, quantity, location)
-pub type AggregatedPart = (String, String, i32, String);
+/// Aggregated part for print/export: (partno, description, quantity, location, tags)
+pub type AggregatedPart = (String, String, i32, String, Vec<String>);
 
 pub fn get_aggregated_parts(
     request_id: Uuid,
@@ -62,7 +64,7 @@ pub fn get_aggregated_parts(
     bom_entries: &[BomEntry],
     request_entries: &[RequestEntry],
 ) -> Vec<AggregatedPart> {
-    let mut parts: Vec<(String, String, i32, String)> = Vec::new();
+    let mut parts: Vec<(String, String, i32, String, Vec<String>)> = Vec::new();
 
     for req_entry in request_entries.iter().filter(|e| e.request_id == request_id) {
         let assembly = match boms.get(&req_entry.part_id) {
@@ -83,21 +85,37 @@ pub fn get_aggregated_parts(
                     component.description.clone(),
                     qty,
                     component.location.clone(),
+                    be.tags.clone(),
                 ));
             }
         }
     }
 
-    // Group by partno and sum quantities
-    let mut groups: HashMap<String, (String, String, i32, String)> = HashMap::new();
-    for (partno, desc, qty, loc) in parts {
+    // Group by partno: sum quantities and merge tags
+    let mut groups: HashMap<String, (String, String, i32, String, std::collections::HashSet<String>)> =
+        HashMap::new();
+    for (partno, desc, qty, loc, tags) in parts {
         groups
             .entry(partno.clone())
-            .and_modify(|e| e.2 += qty)
-            .or_insert((partno, desc, qty, loc));
+            .and_modify(|e| {
+                e.2 += qty;
+                e.4.extend(tags.iter().cloned());
+            })
+            .or_insert_with(|| {
+                let mut tag_set = std::collections::HashSet::new();
+                tag_set.extend(tags.into_iter());
+                (partno, desc, qty, loc, tag_set)
+            });
     }
 
-    let mut result: Vec<AggregatedPart> = groups.into_values().collect();
+    let mut result: Vec<AggregatedPart> = groups
+        .into_iter()
+        .map(|(_, (partno, desc, qty, loc, tag_set))| {
+            let mut tags: Vec<String> = tag_set.into_iter().collect();
+            tags.sort();
+            (partno, desc, qty, loc, tags)
+        })
+        .collect();
     result.sort_by(|a, b| (a.3.as_str(), a.0.as_str()).cmp(&(b.3.as_str(), b.0.as_str())));
     result
 }

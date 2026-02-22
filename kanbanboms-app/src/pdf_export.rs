@@ -85,7 +85,7 @@ pub fn generate_pdf(
         .element(Text::new("Quantity"))
         .push()
         .map_err(|e| e.to_string())?;
-    for (partno, desc, qty, loc) in &parts {
+    for (partno, desc, qty, loc, _tags) in &parts {
         let loc_display = if loc.is_empty() { "N/A" } else { loc.as_str() };
         part_table
             .row()
@@ -101,4 +101,28 @@ pub fn generate_pdf(
     let mut buf = Cursor::new(Vec::new());
     doc.render(&mut buf).map_err(|e| e.to_string())?;
     Ok(buf.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pdf_generation() {
+        let request = Request {
+            id: Uuid::new_v4(),
+            requested_by: String::new(),
+            machine_number: String::new(),
+            notes: String::new(),
+        };
+        let assemblies = vec![];
+        let boms = HashMap::new();
+        let bom_entries = vec![];
+        let request_entries = vec![];
+        let result = generate_pdf(&request, &assemblies, &boms, &bom_entries, &request_entries);
+        assert!(result.is_ok(), "PDF generation failed: {:?}", result.err());
+        let bytes = result.unwrap();
+        assert!(!bytes.is_empty());
+        assert!(bytes.starts_with(b"%PDF"), "Output should be valid PDF");
+    }
 }

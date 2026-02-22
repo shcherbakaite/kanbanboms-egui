@@ -62,12 +62,13 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ctx: &egui::Context) {
 
             let mut to_remove = None;
             egui::Grid::new("bom_edit_grid")
-                .num_columns(5)
+                .num_columns(6)
                 .spacing([12.0, 4.0])
                 .show(ui, |ui| {
                     ui.strong("Part");
                     ui.strong("Description");
                     ui.strong("Qty");
+                    ui.strong("Tags");
                     ui.strong("Disabled");
                     ui.strong("");
                     ui.end_row();
@@ -78,6 +79,22 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ctx: &egui::Context) {
                                 ui.label(&part.partno);
                                 ui.label(&part.description);
                                 ui.add(egui::DragValue::new(&mut be.quantity).speed(0.5).range(1..=10000));
+                                let key = (bom_id, entry.part_id);
+                                let mut tags_edit = app.bom_edit_tags_buffer
+                                    .get(&key)
+                                    .cloned()
+                                    .unwrap_or_else(|| be.tags.join(" "));
+                                let response = ui.add(egui::TextEdit::singleline(&mut tags_edit).desired_width(120.0).id(egui::Id::new(("bom_tags", key))));
+                                if response.changed() {
+                                    app.bom_edit_tags_buffer.insert(key, tags_edit.clone());
+                                }
+                                if response.lost_focus() {
+                                    be.tags = tags_edit
+                                        .split_whitespace()
+                                        .map(|s| s.to_string())
+                                        .collect();
+                                    app.bom_edit_tags_buffer.remove(&key);
+                                }
                                 ui.checkbox(&mut be.disabled, "");
                                 if ui.small_button("✕").clicked() {
                                     to_remove = Some((bom_id, entry.part_id));
@@ -114,6 +131,7 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ctx: &egui::Context) {
                                 part_id,
                                 quantity: 1,
                                 disabled: false,
+                                tags: Vec::new(),
                             });
                         }
                         app.bom_edit_search_modal = false;

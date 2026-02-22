@@ -49,6 +49,15 @@ pub struct KanbanBomsApp {
     pub partno_add_input: String,
     #[serde(skip)]
     pub partno_add_error: Option<String>,
+    /// Tag visibility in preview: true = show parts with this tag
+    #[serde(skip)]
+    pub preview_tag_visible: HashMap<String, bool>,
+    /// In-progress tags edit: (bom_id, part_id) -> current text (allows spaces while typing)
+    #[serde(skip)]
+    pub bom_edit_tags_buffer: HashMap<(Uuid, Uuid), String>,
+    /// BOM preview sort: (column 0-4, ascending). 0=PartNo, 1=Desc, 2=Location, 3=Qty, 4=Tags
+    #[serde(skip)]
+    pub preview_bom_sort: Option<(usize, bool)>,
 }
 
 impl Default for KanbanBomsApp {
@@ -69,6 +78,9 @@ impl Default for KanbanBomsApp {
             location_edit_modal: None,
             partno_add_input: String::new(),
             partno_add_error: None,
+            preview_tag_visible: HashMap::new(),
+            bom_edit_tags_buffer: HashMap::new(),
+            preview_bom_sort: None,
         };
         app.ensure_request();
         app
@@ -106,14 +118,14 @@ impl KanbanBomsApp {
             Bom { id: b6, partno: "EL-1234".into(), description: "Electronic Module".into(), batch_quantity: 1, location: "C1".into() },
         ];
         self.bom_entries = vec![
-            BomEntry { bom_id: b1, part_id: b2, quantity: 2, disabled: false },
-            BomEntry { bom_id: b1, part_id: b3, quantity: 8, disabled: false },
-            BomEntry { bom_id: b1, part_id: b4, quantity: 8, disabled: false },
-            BomEntry { bom_id: b1, part_id: b5, quantity: 16, disabled: false },
-            BomEntry { bom_id: b1, part_id: b6, quantity: 1, disabled: false },
-            BomEntry { bom_id: b2, part_id: b3, quantity: 4, disabled: false },
-            BomEntry { bom_id: b2, part_id: b4, quantity: 4, disabled: false },
-            BomEntry { bom_id: b2, part_id: b5, quantity: 8, disabled: false },
+            BomEntry { bom_id: b1, part_id: b2, quantity: 2, disabled: false, tags: vec!["subassembly".into()] },
+            BomEntry { bom_id: b1, part_id: b3, quantity: 8, disabled: false, tags: vec!["hardware".into()] },
+            BomEntry { bom_id: b1, part_id: b4, quantity: 8, disabled: false, tags: vec!["hardware".into()] },
+            BomEntry { bom_id: b1, part_id: b5, quantity: 16, disabled: false, tags: vec!["hardware".into()] },
+            BomEntry { bom_id: b1, part_id: b6, quantity: 1, disabled: false, tags: vec!["electronic".into()] },
+            BomEntry { bom_id: b2, part_id: b3, quantity: 4, disabled: false, tags: vec!["hardware".into()] },
+            BomEntry { bom_id: b2, part_id: b4, quantity: 4, disabled: false, tags: vec!["hardware".into()] },
+            BomEntry { bom_id: b2, part_id: b5, quantity: 8, disabled: false, tags: vec!["hardware".into()] },
         ];
         if let Some(rid) = self.current_request_id {
             self.request_entries.push(RequestEntry { request_id: rid, part_id: b1, quantity: 2 });
@@ -179,7 +191,7 @@ impl KanbanBomsApp {
         {
             let mut writer = csv::Writer::from_writer(&mut w);
             let _ = writer.write_record(&["Part Number", "Description", "Quantity"]);
-            for (partno, desc, qty, _) in &parts {
+            for (partno, desc, qty, _, _) in &parts {
                 let _ = writer.write_record(&[partno, desc, &qty.to_string()]);
             }
             let _ = writer.flush();
@@ -239,6 +251,7 @@ impl KanbanBomsApp {
                         part_id: new_part_id,
                         quantity: be.quantity,
                         disabled: be.disabled,
+                        tags: be.tags.clone(),
                     });
                 }
             }
@@ -280,6 +293,7 @@ impl eframe::App for KanbanBomsApp {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.current_screen, Screen::RequestEdit, "Requests");
                 ui.selectable_value(&mut self.current_screen, Screen::BomEdit, "BOM Editor");
+                ui.selectable_value(&mut self.current_screen, Screen::BomPreview, "Preview");
                 ui.separator();
                 if ui.button("Import CSV/JSON").clicked() {
                     self.import_modal_open = true;
