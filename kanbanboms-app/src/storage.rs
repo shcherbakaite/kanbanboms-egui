@@ -1,4 +1,4 @@
-use crate::models::{Bom, BomEntry, BomRevision, Request, RequestEntry};
+use crate::models::{Bom, BomEntry, BomRevision};
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_arch = "wasm32")]
@@ -6,18 +6,25 @@ use gloo_storage::Storage;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+fn default_part_master_categories() -> Vec<String> {
+    let mut cats = vec!["All".to_string()];
+    cats.extend(crate::models::PART_CATEGORIES.iter().map(|s| s.to_string()));
+    cats
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StoredData {
     pub boms: Vec<Bom>,
     pub bom_entries: Vec<BomEntry>,
-    pub requests: Vec<Request>,
-    pub request_entries: Vec<RequestEntry>,
     /// Revisions per BOM: bom_id -> list of revisions (newest first)
     #[serde(default)]
     pub bom_revisions: HashMap<Uuid, Vec<BomRevision>>,
     /// Next revision number per BOM
     #[serde(default)]
     pub bom_revision_next: HashMap<Uuid, u32>,
+    /// Part Master visible category tabs (shared between users when using PocketBase)
+    #[serde(default = "default_part_master_categories")]
+    pub part_master_categories: Vec<String>,
 }
 
 impl StoredData {
@@ -83,7 +90,10 @@ pub fn parse_csv_import(csv_text: &str) -> Result<StoredData, String> {
             .push((component_partno, component_desc, quantity, disabled));
     }
 
-    let mut stored = StoredData::default();
+    let mut stored = StoredData {
+        part_master_categories: default_part_master_categories(),
+        ..Default::default()
+    };
     let mut partno_to_id: HashMap<String, Uuid> = HashMap::new();
 
     for (asm_partno, (asm_desc, parts)) in boms {
@@ -98,6 +108,7 @@ pub fn parse_csv_import(csv_text: &str) -> Result<StoredData, String> {
                     batch_quantity: 1,
                     location: String::new(),
                     custom_fields: HashMap::new(),
+                    bom_entry_count: 0,
                 });
                 id
             });
@@ -112,6 +123,7 @@ pub fn parse_csv_import(csv_text: &str) -> Result<StoredData, String> {
                     batch_quantity: 0,
                     location: String::new(),
                     custom_fields: HashMap::new(),
+                    bom_entry_count: 0,
                 });
                 id
             });

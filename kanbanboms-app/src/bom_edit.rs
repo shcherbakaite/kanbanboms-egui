@@ -60,8 +60,8 @@ fn bom_edit_rows_for_table(app: &KanbanBomsApp, entries: &[BomEntry]) -> Vec<Bom
 }
 
 /// Sync key to avoid replacing table rows every frame.
-fn bom_edit_sync_key(bom_id: Uuid, entries_count: usize, viewing_revision: Option<u32>) -> (Uuid, usize, Option<u32>) {
-    (bom_id, entries_count, viewing_revision)
+fn bom_edit_sync_key(app: &KanbanBomsApp, bom_id: Uuid, entries_count: usize, viewing_revision: Option<u32>) -> (u64, Uuid, usize, Option<u32>) {
+    (app.data_version, bom_id, entries_count, viewing_revision)
 }
 
 /// Apply table rows back to bom_entries. Removes entries not in table, updates existing, adds new.
@@ -104,6 +104,7 @@ pub fn sync_table_to_bom_entries(app: &mut KanbanBomsApp, bom_id: Uuid, rows: &[
             });
         }
     }
+    crate::models::recompute_bom_entry_counts(&mut app.boms, &app.bom_entries);
 }
 
 /// Codec for copy-to-clipboard (TSV).
@@ -401,33 +402,9 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
             ui.heading("BOM Editor");
             ui.add_space(8.0);
 
-            ui.horizontal(|ui| {
-                ui.label("Select BOM to edit:");
-                let boms: Vec<_> = app.boms.iter().collect();
-                let selected_partno = app
-                    .selected_bom_for_edit
-                    .and_then(|id| app.boms.iter().find(|b| b.id == id).map(|b| b.partno.clone()))
-                    .unwrap_or_default();
-                egui::ComboBox::from_id_salt("bom_select")
-                    .selected_text(if selected_partno.is_empty() {
-                        "Select...".to_string()
-                    } else {
-                        selected_partno.clone()
-                    })
-                    .show_ui(ui, |ui| {
-                        for bom in &boms {
-                            let text = format!("{} - {}", bom.partno, bom.description);
-                            let is_selected = app.selected_bom_for_edit == Some(bom.id);
-                            if ui.selectable_label(is_selected, &text).clicked() {
-                                app.selected_bom_for_edit = Some(bom.id);
-                            }
-                        }
-                    });
-            });
-
             if let Some(bom_id) = app.selected_bom_for_edit {
                 // Reset viewing revision when switching to a different BOM
-                if app.bom_edit_last_sync_key.map(|(id, _, _)| id) != Some(bom_id) {
+                if app.bom_edit_last_sync_key.map(|(_, id, _, _)| id) != Some(bom_id) {
                     app.bom_edit_viewing_revision = None;
                 }
                 let bom = match app.boms.iter().find(|b| b.id == bom_id) {
@@ -474,7 +451,7 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                 ui.add_space(4.0);
 
                 let entries = bom_entries_for_edit(app, bom_id);
-                let sync_key = bom_edit_sync_key(bom_id, entries.len(), app.bom_edit_viewing_revision);
+                let sync_key = bom_edit_sync_key(app, bom_id, entries.len(), app.bom_edit_viewing_revision);
                 if app.bom_edit_last_sync_key != Some(sync_key) {
                     let rows = bom_edit_rows_for_table(app, &entries);
                     app.bom_edit_table.replace(rows);
@@ -545,6 +522,7 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                             .insert(0, BomRevision { revision: rev, entries });
                         *app.bom_revision_next.get_mut(&bom_id).unwrap() = rev + 1;
                         app.bom_edit_viewing_revision = None; // Stay on current after save
+                        app.mark_dirty();
                     }
                 });
             }

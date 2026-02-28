@@ -1,14 +1,14 @@
 use crate::bom_edit::BomEditRow;
 use crate::bom_preview::BomPreviewRow;
-use crate::part_master::PartMasterRow;
+use crate::part_master::{PartMasterRow, UsageReportRow};
 use crate::dock::{show_dock_ui, DockTab, PartEditState, RequestTabState};
-use crate::models::{get_aggregated_parts, Bom, BomEntry, BomRevision, Request, RequestEntry};
+use crate::models::{get_aggregated_parts, recompute_bom_entry_counts, Bom, BomEntry, BomRevision, Request, RequestEntry};
 use crate::html_export::generate_html_print_preview;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::pdf_export::generate_pdf;
+use crate::backend::{Backend, LocalBackend, PocketBaseBackend};
 use crate::storage::{parse_csv_import, StoredData};
-use egui;
-use serde::{Deserialize, Serialize};
+use egui::{Key, KeyboardShortcut, Modifiers};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -47,9 +47,9 @@ pub struct KanbanBomsApp {
     /// BOM Preview: data table (egui-data-table)
     #[serde(skip)]
     pub bom_preview_table: egui_data_table::DataTable<BomPreviewRow>,
-    /// BOM Preview: last sync key (request_id, parts_len, filtered_len) to avoid replacing rows every frame
+    /// BOM Preview: last sync key (data_version, request_id, parts_len, filtered_len, total_qty) to avoid replacing rows every frame
     #[serde(skip)]
-    pub bom_preview_last_sync_key: Option<(Uuid, usize, usize)>,
+    pub bom_preview_last_sync_key: Option<(u64, Uuid, usize, usize, i32)>,
     /// Part Master: selected worksheet tab index
     #[serde(skip)]
     pub part_master_tab: usize,
@@ -79,15 +79,15 @@ pub struct KanbanBomsApp {
     /// Part Master: data table (egui-data-table)
     #[serde(skip)]
     pub part_master_table: egui_data_table::DataTable<PartMasterRow>,
-    /// Part Master: last sync key (tab, filter, boms_len) to avoid replacing rows every frame
+    /// Part Master: last sync key (data_version, tab, filter, boms_len, custom_sig) to avoid replacing rows every frame
     #[serde(skip)]
-    pub part_master_last_sync_key: Option<(usize, String, usize, String)>,
+    pub part_master_last_sync_key: Option<(u64, usize, String, usize, String)>,
     /// BOM Edit: data table (egui-data-table)
     #[serde(skip)]
     pub bom_edit_table: egui_data_table::DataTable<BomEditRow>,
-    /// BOM Edit: last sync key (bom_id, entries_count, viewing_revision) to avoid replacing rows every frame
+    /// BOM Edit: last sync key (data_version, bom_id, entries_count, viewing_revision) to avoid replacing rows every frame
     #[serde(skip)]
-    pub bom_edit_last_sync_key: Option<(Uuid, usize, Option<u32>)>,
+    pub bom_edit_last_sync_key: Option<(u64, Uuid, usize, Option<u32>)>,
     /// BOM revisions per bom_id (newest first)
     #[serde(default)]
     pub bom_revisions: HashMap<Uuid, Vec<BomRevision>>,
@@ -100,12 +100,49 @@ pub struct KanbanBomsApp {
     /// When Part Master "Edit BOM" is clicked, set this; dock will open a BOM Edit tab and clear it.
     #[serde(skip)]
     pub pending_open_bom: Option<Uuid>,
+    /// When Part Master "Usage report" is clicked, set this; dock will open a Usage Report tab.
+    #[serde(skip)]
+    pub part_master_usage_report: Option<Uuid>,
+    /// Usage Report: data table (egui-data-table)
+    #[serde(skip)]
+    pub usage_report_table: egui_data_table::DataTable<UsageReportRow>,
+    /// Usage Report: last sync key (data_version, part_id, usages_count)
+    #[serde(skip)]
+    pub usage_report_last_sync_key: Option<(u64, Uuid, usize)>,
     /// Dock layout state (egui_dock).
     #[serde(skip)]
     pub dock_state: Option<egui_dock::DockState<DockTab>>,
     /// Per-request tab state (Edit/Preview mode).
     #[serde(skip)]
     pub request_states: std::collections::HashMap<Uuid, RequestTabState>,
+    /// PocketBase API base URL (e.g. http://localhost:8090/api). Empty = local storage only.
+    #[serde(default)]
+    pub api_base_url: String,
+    /// Backend settings modal open
+    #[serde(skip)]
+    pub backend_modal_open: bool,
+    /// Last backend error message
+    #[serde(skip)]
+    pub backend_error: Option<String>,
+    /// Status flash: (message, is_error). Green for success, red for error. Auto-clears after ~5s.
+    #[serde(skip)]
+    pub status_flash: Option<(String, bool)>,
+    #[serde(skip)]
+    pub status_flash_at: Option<f64>,
+    /// WASM: pending load result (channel receiver)
+    #[serde(skip)]
+    #[cfg(target_arch = "wasm32")]
+    pub backend_load_rx: Option<std::sync::mpsc::Receiver<Result<StoredData, String>>>,
+    /// WASM: pending save result (channel receiver)
+    #[serde(skip)]
+    #[cfg(target_arch = "wasm32")]
+    pub backend_save_rx: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    /// Data changed since last save; triggers auto-save when backend is configured
+    #[serde(skip)]
+    pub data_dirty: bool,
+    /// Incremented on every data change; included in view sync keys so all views refresh when any view saves
+    #[serde(skip, default)]
+    pub data_version: u64,
 }
 
 fn default_visible_categories() -> Vec<String> {
@@ -152,8 +189,22 @@ impl Default for KanbanBomsApp {
             bom_revision_next: HashMap::new(),
             bom_edit_viewing_revision: None,
             pending_open_bom: None,
+            part_master_usage_report: None,
+            usage_report_table: egui_data_table::DataTable::new(),
+            usage_report_last_sync_key: None,
             dock_state: None,
             request_states: std::collections::HashMap::new(),
+            api_base_url: String::new(),
+            backend_modal_open: false,
+            backend_error: None,
+            status_flash: None,
+            status_flash_at: None,
+            #[cfg(target_arch = "wasm32")]
+            backend_load_rx: None,
+            #[cfg(target_arch = "wasm32")]
+            backend_save_rx: None,
+            data_dirty: false,
+            data_version: 0,
         };
         app.ensure_request();
         app
@@ -168,12 +219,158 @@ impl KanbanBomsApp {
             Default::default()
         };
         app.ensure_request();
+        // If PocketBase URL configured, load from server (native only; WASM uses manual Load from server)
+        #[cfg(not(target_arch = "wasm32"))]
+        if !app.api_base_url.trim().is_empty() {
+            let backend = Backend::PocketBase(PocketBaseBackend::new(&app.api_base_url));
+            match backend.load_sync(cc.storage) {
+                Ok(data) => {
+                    app.apply_loaded_data(data);
+                }
+                Err(e) => {
+                    app.backend_error = Some(e.to_string());
+                }
+            }
+        }
         if app.boms.is_empty() {
             app.seed_test_data();
         }
+        recompute_bom_entry_counts(&mut app.boms, &app.bom_entries);
         app
     }
 
+    fn backend(&self) -> Backend {
+        if self.api_base_url.trim().is_empty() {
+            Backend::Local(LocalBackend)
+        } else {
+            Backend::PocketBase(PocketBaseBackend::new(&self.api_base_url))
+        }
+    }
+
+    fn load_from_backend(&mut self, storage: Option<&dyn eframe::Storage>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let backend = self.backend();
+            match backend.load_sync(storage) {
+                Ok(data) => {
+                    self.apply_loaded_data(data);
+                    self.set_status_flash("Loaded from server", false);
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    self.backend_error = Some(msg.clone());
+                    self.set_status_flash(&msg, true);
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let url = self.api_base_url.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.backend_load_rx = Some(rx);
+            wasm_bindgen_futures::spawn_local(async move {
+                let pb = PocketBaseBackend::new(&url);
+                let result = pb.load().await.map_err(|e| e.to_string());
+                let _ = tx.send(result);
+            });
+        }
+    }
+
+    fn apply_loaded_data(&mut self, data: StoredData) {
+        self.boms = data.boms;
+        self.bom_entries = data.bom_entries;
+        recompute_bom_entry_counts(&mut self.boms, &self.bom_entries);
+        // requests/request_entries are local state only, not stored in database
+        self.bom_revisions = data.bom_revisions;
+        self.bom_revision_next = data.bom_revision_next;
+        self.part_master_visible_categories = data.part_master_categories;
+        self.ensure_request();
+        self.backend_error = None;
+        self.data_dirty = false; // loaded from server, not dirty
+    }
+
+    fn set_status_flash(&mut self, msg: &str, is_error: bool) {
+        self.status_flash = Some((msg.to_string(), is_error));
+        self.status_flash_at = None; // set in update when we have ctx time
+    }
+
+    pub(crate) fn mark_dirty(&mut self) {
+        self.data_dirty = true;
+        self.data_version = self.data_version.wrapping_add(1);
+    }
+
+    fn save_to_backend(&mut self, storage: Option<&mut dyn eframe::Storage>) {
+        recompute_bom_entry_counts(&mut self.boms, &self.bom_entries);
+        let data = StoredData {
+            boms: self.boms.clone(),
+            bom_entries: self.bom_entries.clone(),
+            bom_revisions: self.bom_revisions.clone(),
+            bom_revision_next: self.bom_revision_next.clone(),
+            part_master_categories: self.part_master_visible_categories.clone(),
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let backend = self.backend();
+            match backend.save_sync(&data, storage) {
+                Ok(()) => {
+                    self.backend_error = None;
+                    self.set_status_flash("Saved to server", false);
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    self.backend_error = Some(msg.clone());
+                    self.set_status_flash(&msg, true);
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let url = self.api_base_url.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.backend_save_rx = Some(rx);
+            wasm_bindgen_futures::spawn_local(async move {
+                let pb = PocketBaseBackend::new(&url);
+                let result = pb.save(&data).await.map_err(|e| e.to_string());
+                let _ = tx.send(result);
+            });
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn poll_backend_pending(&mut self) {
+        use std::sync::mpsc::TryRecvError;
+        if let Some(rx) = self.backend_load_rx.take() {
+            match rx.try_recv() {
+                Ok(Ok(data)) => {
+                    self.apply_loaded_data(data);
+                    self.set_status_flash("Loaded from server", false);
+                }
+                Ok(Err(e)) => {
+                    self.backend_error = Some(e.clone());
+                    self.set_status_flash(&e, true);
+                }
+                Err(TryRecvError::Empty) => self.backend_load_rx = Some(rx),
+                Err(TryRecvError::Disconnected) => {}
+            }
+        }
+        if let Some(rx) = self.backend_save_rx.take() {
+            match rx.try_recv() {
+                Ok(Ok(())) => {
+                    self.backend_error = None;
+                    self.set_status_flash("Saved to server", false);
+                }
+                Ok(Err(e)) => {
+                    self.backend_error = Some(e.clone());
+                    self.set_status_flash(&e, true);
+                }
+                Err(TryRecvError::Empty) => self.backend_save_rx = Some(rx),
+                Err(TryRecvError::Disconnected) => {}
+            }
+        }
+    }
+}
+
+impl KanbanBomsApp {
     /// Add 1000 random parts per category (EA, ME, SD, TR, Others). Skips part numbers that already exist.
     pub fn add_seed_parts(&mut self) {
         use crate::models::Bom;
@@ -203,6 +400,7 @@ impl KanbanBomsApp {
                     batch_quantity: 0,
                     location: loc,
                     custom_fields: HashMap::new(),
+                    bom_entry_count: 0,
                 });
             }
         }
@@ -221,8 +419,10 @@ impl KanbanBomsApp {
                 batch_quantity: 0,
                 location: loc,
                 custom_fields: HashMap::new(),
+                bom_entry_count: 0,
             });
         }
+        self.mark_dirty();
     }
 
     fn seed_test_data(&mut self) {
@@ -235,12 +435,12 @@ impl KanbanBomsApp {
         let b5 = Uuid::new_v4();
         let b6 = Uuid::new_v4();
         let mut boms = vec![
-            Bom { id: b1, partno: "10001-AB-001".into(), description: "Main Assembly".into(), batch_quantity: 1, location: "A1".into(), custom_fields: [("Supplier".into(), "Acme Corp".into()), ("Lead Time".into(), "2 weeks".into())].into_iter().collect() },
-            Bom { id: b2, partno: "10002-CD-002".into(), description: "Sub Assembly".into(), batch_quantity: 1, location: "A2".into(), custom_fields: [("Supplier".into(), "Beta Inc".into())].into_iter().collect() },
-            Bom { id: b3, partno: "20001-EF-001".into(), description: "Steel Bolt M8".into(), batch_quantity: 0, location: "B1".into(), custom_fields: HashMap::new() },
-            Bom { id: b4, partno: "20002-GH-002".into(), description: "Hex Nut M8".into(), batch_quantity: 0, location: "B2".into(), custom_fields: [("Lead Time".into(), "1 week".into())].into_iter().collect() },
-            Bom { id: b5, partno: "20003-IJ-003".into(), description: "Washer 8mm".into(), batch_quantity: 0, location: "B3".into(), custom_fields: HashMap::new() },
-            Bom { id: b6, partno: "EL-1234".into(), description: "Electronic Module".into(), batch_quantity: 1, location: "C1".into(), custom_fields: HashMap::new() },
+            Bom { id: b1, partno: "10001-AB-001".into(), description: "Main Assembly".into(), batch_quantity: 1, location: "A1".into(), custom_fields: [("Supplier".into(), "Acme Corp".into()), ("Lead Time".into(), "2 weeks".into())].into_iter().collect(), bom_entry_count: 0 },
+            Bom { id: b2, partno: "10002-CD-002".into(), description: "Sub Assembly".into(), batch_quantity: 1, location: "A2".into(), custom_fields: [("Supplier".into(), "Beta Inc".into())].into_iter().collect(), bom_entry_count: 0 },
+            Bom { id: b3, partno: "20001-EF-001".into(), description: "Steel Bolt M8".into(), batch_quantity: 0, location: "B1".into(), custom_fields: HashMap::new(), bom_entry_count: 0 },
+            Bom { id: b4, partno: "20002-GH-002".into(), description: "Hex Nut M8".into(), batch_quantity: 0, location: "B2".into(), custom_fields: [("Lead Time".into(), "1 week".into())].into_iter().collect(), bom_entry_count: 0 },
+            Bom { id: b5, partno: "20003-IJ-003".into(), description: "Washer 8mm".into(), batch_quantity: 0, location: "B3".into(), custom_fields: HashMap::new(), bom_entry_count: 0 },
+            Bom { id: b6, partno: "EL-1234".into(), description: "Electronic Module".into(), batch_quantity: 1, location: "C1".into(), custom_fields: HashMap::new(), bom_entry_count: 0 },
         ];
         const DESCRIPTIONS: &[&str] = &[
             "Assembly", "Bracket", "Bushing", "Cap", "Clip", "Cover", "Gasket", "Guide",
@@ -263,6 +463,7 @@ impl KanbanBomsApp {
                     batch_quantity: 0,
                     location: loc,
                     custom_fields: HashMap::new(),
+                    bom_entry_count: 0,
                 });
             }
         }
@@ -278,6 +479,7 @@ impl KanbanBomsApp {
                 batch_quantity: 0,
                 location: loc,
                 custom_fields: HashMap::new(),
+                bom_entry_count: 0,
             });
         }
         self.boms = boms;
@@ -306,6 +508,7 @@ impl KanbanBomsApp {
             };
             self.current_request_id = Some(req.id);
             self.requests.push(req);
+            self.mark_dirty();
         }
     }
 
@@ -324,7 +527,8 @@ impl KanbanBomsApp {
             .collect();
         for bom_id in assembly_ids {
             let entries = if let Some(revs) = self.bom_revisions.get(&bom_id) {
-                revs.first()
+                revs.iter()
+                    .max_by_key(|r| r.revision)
                     .map(|r| r.entries.clone())
                     .unwrap_or_else(|| {
                         self.bom_entries
@@ -363,11 +567,13 @@ impl KanbanBomsApp {
                 quantity: bom.batch_quantity.max(1),
             });
         }
+        self.mark_dirty();
     }
 
     pub fn clear_request(&mut self) {
         if let Some(rid) = self.current_request_id {
             self.request_entries.retain(|e| e.request_id != rid);
+            self.mark_dirty();
         }
     }
 
@@ -414,7 +620,22 @@ impl KanbanBomsApp {
             .collect();
         let boms_map = self.boms_by_id();
         let bom_entries = self.effective_bom_entries_for_request(request_id);
-        match generate_pdf(&request, &assemblies, &boms_map, &bom_entries, &self.request_entries) {
+        let mut parts = get_aggregated_parts(
+            request_id,
+            &boms_map,
+            &bom_entries,
+            &self.request_entries,
+        );
+        // Filter by tag visibility (same as preview)
+        parts.retain(|(_, _, _, _, tags)| {
+            tags.is_empty()
+                || tags
+                    .iter()
+                    .any(|t| self.preview_tag_visible.get(t).copied().unwrap_or(true))
+        });
+        let sort_state = self.bom_preview_table.sort_state();
+        crate::html_export::sort_parts_by_state(&mut parts, &sort_state);
+        match generate_pdf(&request, &assemblies, &boms_map, &parts) {
             Ok(bytes) => {
                 if let Err(e) = std::fs::write("kitting_bom.pdf", &bytes) {
                     log::error!("Failed to write PDF: {}", e);
@@ -424,7 +645,7 @@ impl KanbanBomsApp {
         }
     }
 
-    pub fn trigger_print_preview(&self) {
+    pub fn trigger_print_preview(&mut self) {
         let request_id = match self.current_request_id {
             Some(id) => id,
             None => return,
@@ -441,14 +662,37 @@ impl KanbanBomsApp {
             .collect();
         let boms_map = self.boms_by_id();
         let bom_entries = self.effective_bom_entries_for_request(request_id);
-        let html = generate_html_print_preview(
-            &request,
-            &assemblies,
+        let mut parts = get_aggregated_parts(
+            request_id,
             &boms_map,
             &bom_entries,
             &self.request_entries,
         );
-        crate::app::open_html_in_browser(&html);
+        // Filter by tag visibility (same as preview)
+        parts.retain(|(_, _, _, _, tags)| {
+            tags.is_empty()
+                || tags
+                    .iter()
+                    .any(|t| self.preview_tag_visible.get(t).copied().unwrap_or(true))
+        });
+        // Apply preview data grid sort order
+        let sort_state = self.bom_preview_table.sort_state();
+        crate::html_export::sort_parts_by_state(&mut parts, &sort_state);
+        let html = generate_html_print_preview(&request, &assemblies, &boms_map, &parts);
+        if let Some(path) = crate::app::open_html_in_browser(&html) {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let path_str = path.canonicalize().unwrap_or(path.clone()).display().to_string();
+                if arboard::Clipboard::new().and_then(|mut c| c.set_text(&path_str)).is_ok() {
+                    self.set_status_flash(
+                        "Preview saved to Downloads. Path copied to clipboard. If Firefox blocks it, use File > Open File and paste the path.",
+                        false,
+                    );
+                } else {
+                    self.set_status_flash(&format!("Preview saved to: {}", path_str), false);
+                }
+            }
+        }
     }
 
     pub fn merge_import(&mut self, data: StoredData) {
@@ -477,11 +721,19 @@ impl KanbanBomsApp {
                 }
             }
         }
+        for cat in &data.part_master_categories {
+            if !self.part_master_visible_categories.iter().any(|c| c == cat) {
+                self.part_master_visible_categories.push(cat.clone());
+            }
+        }
+        recompute_bom_entry_counts(&mut self.boms, &self.bom_entries);
+        self.mark_dirty();
     }
 }
 
 /// Opens HTML content in the default browser (native) or a new tab (WASM).
-pub fn open_html_in_browser(html: &str) {
+/// Returns the file path on native (for status message); None on WASM or on error.
+pub fn open_html_in_browser(html: &str) -> Option<std::path::PathBuf> {
     #[cfg(target_arch = "wasm32")]
     {
         let window = web_sys::window().expect("No window");
@@ -496,25 +748,42 @@ pub fn open_html_in_browser(html: &str) {
         let _ = window.open_with_url(&url);
         // Don't revoke URL immediately - the new window needs it to load
         // The URL will be garbage-collected when the window is closed
+        None
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let path = std::env::temp_dir().join("kitting_bom_preview.html");
+        // Save to ~/Downloads so user can open manually (Firefox blocks file:// from external apps)
+        let path = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .ok()
+            .and_then(|h| {
+                let dir = std::path::Path::new(&h).join("Downloads");
+                let _ = std::fs::create_dir_all(&dir);
+                Some(dir.join("kitting_bom_preview.html"))
+            })
+            .unwrap_or_else(|| {
+                std::env::temp_dir().join(format!(
+                    "kitting_bom_preview_{}.html",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0)
+                ))
+            });
         if let Err(e) = std::fs::write(&path, html) {
             log::error!("Failed to write HTML preview: {}", e);
-            return;
+            return None;
         }
-        #[cfg(target_os = "linux")]
-        let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
-        #[cfg(target_os = "macos")]
-        let _ = std::process::Command::new("open").arg(&path).spawn();
-        #[cfg(target_os = "windows")]
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", "", path.as_os_str()])
-            .spawn();
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        log::warn!("Unsupported OS for opening HTML preview");
+        #[cfg(unix)]
+        let _ = std::fs::metadata(&path).and_then(|m| {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = m.permissions();
+            perms.set_mode(0o644);
+            std::fs::set_permissions(&path, perms)
+        });
+        let _ = opener::open(&path); // Works for Chrome; Firefox blocks - path is copied for manual open
+        Some(path)
     }
 }
 
@@ -544,31 +813,102 @@ pub(crate) fn download_bytes(data: &[u8], filename: &str) {
 
 impl eframe::App for KanbanBomsApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        recompute_bom_entry_counts(&mut self.boms, &self.bom_entries);
         let data = StoredData {
             boms: self.boms.clone(),
             bom_entries: self.bom_entries.clone(),
-            requests: self.requests.clone(),
-            request_entries: self.request_entries.clone(),
             bom_revisions: self.bom_revisions.clone(),
             bom_revision_next: self.bom_revision_next.clone(),
+            part_master_categories: self.part_master_visible_categories.clone(),
         };
         data.save_to_eframe(storage);
+        // Sync to PocketBase when configured (native only; WASM uses manual Save to server button)
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.api_base_url.trim().is_empty() {
+            let backend = self.backend();
+            let _ = backend.save_sync(&data, None);
+        }
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(egui::Visuals::light());
 
-        egui::TopBottomPanel::top("menu").show(ctx, |ui| {
+        #[cfg(target_arch = "wasm32")]
+        self.poll_backend_pending();
+
+        // Ctrl+Shift+I: open JSON/CSV import modal
+        let import_shortcut = KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::I);
+        if ctx.input_mut(|i| i.consume_shortcut(&import_shortcut)) {
+            self.import_modal_open = true;
+            self.import_error = None;
+        }
+
+        let now = ctx.input(|i| i.time);
+        if self.status_flash.is_some() {
+            if self.status_flash_at.is_none() {
+                self.status_flash_at = Some(now);
+            }
+            if let Some(at) = self.status_flash_at {
+                if now - at > 5.0 {
+                    self.status_flash = None;
+                    self.status_flash_at = None;
+                }
+            }
+        }
+
+        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Import CSV/JSON").clicked() {
-                    self.import_modal_open = true;
+                if let Some((ref msg, is_error)) = self.status_flash {
+                    let color = if is_error {
+                        egui::Color32::from_rgb(0xc0, 0x30, 0x30)
+                    } else {
+                        egui::Color32::from_rgb(0x28, 0x88, 0x48)
+                    };
+                    ui.colored_label(color, msg);
                 }
-                if ui.button("Seed 1000 parts per category").clicked() {
-                    self.add_seed_parts();
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Backend").clicked() {
+                        self.backend_modal_open = true;
+                    }
+                });
             });
         });
+
+        if self.backend_modal_open {
+            egui::Window::new("Backend (PocketBase)")
+                .collapsible(false)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.label("PocketBase API URL (e.g. http://localhost:8090/api):");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.api_base_url)
+                            .desired_width(400.0),
+                    );
+                    if let Some(ref err) = self.backend_error {
+                        ui.colored_label(egui::Color32::RED, err);
+                    }
+                    ui.horizontal(|ui| {
+                        let has_url = !self.api_base_url.trim().is_empty();
+                        if ui
+                            .add_enabled(has_url, egui::Button::new("Load from server"))
+                            .clicked()
+                        {
+                            self.load_from_backend(None);
+                        }
+                        if ui
+                            .add_enabled(has_url, egui::Button::new("Save to server"))
+                            .clicked()
+                        {
+                            self.save_to_backend(None);
+                        }
+                        if ui.button("Close").clicked() {
+                            self.backend_modal_open = false;
+                            self.backend_error = None;
+                        }
+                    });
+                });
+        }
 
         if self.import_modal_open {
             egui::Window::new("Import Data")
@@ -623,6 +963,13 @@ impl eframe::App for KanbanBomsApp {
             show_dock_ui(dock_state, self, ctx);
         }
         self.dock_state = ds;
+
+        // Auto-save on every change when PocketBase is configured
+        // (Local backend persists via eframe::App::save on exit/timer)
+        if self.data_dirty && !self.api_base_url.trim().is_empty() {
+            self.save_to_backend(None);
+            self.data_dirty = false;
+        }
     }
 }
 

@@ -1,4 +1,5 @@
-use crate::models::{get_aggregated_parts, Bom, Request, RequestEntry};
+use crate::html_export::PartTuple;
+use crate::models::{Bom, Request, RequestEntry};
 use genpdf::elements::{FrameCellDecorator, Paragraph, TableLayout, Text};
 use genpdf::Element;
 use genpdf::{elements, fonts, style, Document, SimplePageDecorator};
@@ -22,8 +23,7 @@ pub fn generate_pdf(
     request: &Request,
     assemblies: &[RequestEntry],
     boms: &HashMap<Uuid, Bom>,
-    bom_entries: &[crate::models::BomEntry],
-    request_entries: &[RequestEntry],
+    parts: &[PartTuple],
 ) -> Result<Vec<u8>, String> {
     let font = load_font();
     let mut doc = Document::new(font);
@@ -66,12 +66,6 @@ pub fn generate_pdf(
     doc.push(asm_table);
     doc.push(elements::Break::new(1.0));
 
-    let parts = get_aggregated_parts(
-        request.id,
-        boms,
-        bom_entries,
-        request_entries,
-    );
     doc.push(Paragraph::new("Bill Of Materials").styled(style::Style::new().with_font_size(14)));
     doc.push(elements::Break::new(0.5));
 
@@ -85,7 +79,7 @@ pub fn generate_pdf(
         .element(Text::new("Quantity"))
         .push()
         .map_err(|e| e.to_string())?;
-    for (partno, desc, qty, loc, _tags) in &parts {
+    for (partno, desc, qty, loc, _tags) in parts {
         let loc_display = if loc.is_empty() { "N/A" } else { loc.as_str() };
         part_table
             .row()
@@ -117,9 +111,8 @@ mod tests {
         };
         let assemblies = vec![];
         let boms = HashMap::new();
-        let bom_entries = vec![];
-        let request_entries = vec![];
-        let result = generate_pdf(&request, &assemblies, &boms, &bom_entries, &request_entries);
+        let parts: Vec<PartTuple> = vec![];
+        let result = generate_pdf(&request, &assemblies, &boms, &parts);
         assert!(result.is_ok(), "PDF generation failed: {:?}", result.err());
         let bytes = result.unwrap();
         assert!(!bytes.is_empty());

@@ -203,21 +203,24 @@ impl RowViewer<BomPreviewRow> for BomPreviewViewer {
 }
 
 pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
+    let request_id = match app.current_request_id {
+        Some(id) => id,
+        None => {
+            ui.label("No request selected");
+            return;
+        }
+    };
+
     let avail = ui.available_rect_before_wrap();
     let width = avail.width().min(CENTERED_MAX_WIDTH);
     let left = avail.left() + (avail.width() - width) / 2.0;
     let rect = egui::Rect::from_min_size(egui::pos2(left, avail.top()), egui::vec2(width, avail.height()));
+    egui::ScrollArea::vertical()
+        .id_salt(("bom_preview_scroll", request_id))
+        .show(ui, |ui| {
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
         ui.heading("Kitting BOM - Preview");
         ui.add_space(8.0);
-
-        let request_id = match app.current_request_id {
-            Some(id) => id,
-            None => {
-                ui.label("No request selected");
-                return;
-            }
-        };
 
         let assemblies: Vec<_> = app
             .request_entries
@@ -232,36 +235,6 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
             return;
         }
 
-        let date = Local::now().format("%m/%d/%Y").to_string();
-        ui.label(format!("Date: {}", date));
-        ui.add_space(8.0);
-
-        ui.strong("Assemblies");
-        ui.add_space(4.0);
-        let request_id = app.current_request_id.unwrap_or_default();
-        egui::ScrollArea::horizontal()
-            .id_salt(("assemblies_scroll", request_id))
-            .show(ui, |ui| {
-            egui::Grid::new(("assemblies_grid", request_id))
-                .num_columns(3)
-                .spacing([8.0, 4.0])
-                .show(ui, |ui| {
-                    ui.strong("Qty");
-                    ui.strong("Part Number");
-                    ui.strong("Description");
-                    ui.end_row();
-                    for ae in &assemblies {
-                        if let Some(bom) = app.boms.iter().find(|b| b.id == ae.part_id) {
-                            ui.label(ae.quantity.to_string());
-                            ui.label(&bom.partno);
-                            ui.label(&bom.description);
-                            ui.end_row();
-                        }
-                    }
-                });
-        });
-        ui.add_space(12.0);
-
         let boms_map = app.boms_by_id();
         let bom_entries = app.effective_bom_entries_for_request(request_id);
         let parts = get_aggregated_parts(
@@ -271,7 +244,48 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
             &app.request_entries,
         );
 
-        // Collect all unique tags and ensure they have visibility state (default: visible)
+        let date = Local::now().format("%m/%d/%Y").to_string();
+        ui.label(format!("Date: {}", date));
+        ui.add_space(8.0);
+
+        ui.strong("Assemblies");
+        ui.add_space(4.0);
+        egui::ScrollArea::horizontal()
+            .id_salt(("assemblies_scroll", request_id))
+            .show(ui, |ui| {
+            egui::Grid::new(("assemblies_grid", request_id))
+                .num_columns(4)
+                .spacing([8.0, 4.0])
+                .show(ui, |ui| {
+                    ui.strong("Qty");
+                    ui.strong("Part Number");
+                    ui.strong("Description");
+                    ui.strong("Tags");
+                    ui.end_row();
+                    for ae in &assemblies {
+                        if let Some(bom) = app.boms.iter().find(|b| b.id == ae.part_id) {
+                            let assembly_tags: std::collections::HashSet<String> = bom_entries
+                                .iter()
+                                .filter(|be| be.bom_id == ae.part_id)
+                                .flat_map(|be| be.tags.iter().cloned())
+                                .collect();
+                            let tags_str: String = {
+                                let mut v: Vec<_> = assembly_tags.into_iter().collect();
+                                v.sort();
+                                v.join(", ")
+                            };
+                            ui.label(ae.quantity.to_string());
+                            ui.label(&bom.partno);
+                            ui.label(&bom.description);
+                            ui.label(if tags_str.is_empty() { "—" } else { &tags_str });
+                            ui.end_row();
+                        }
+                    }
+                });
+        });
+        ui.add_space(12.0);
+
+        // Tag filters after assemblies (always show section)
         let all_tags: std::collections::HashSet<String> = parts
             .iter()
             .flat_map(|(_, _, _, _, tags)| tags.iter().cloned())
@@ -281,9 +295,10 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                 .entry(tag.clone())
                 .or_insert(true);
         }
-
-        if !all_tags.is_empty() {
-            ui.strong("Filter by tag:");
+        ui.strong("Filter by tags:");
+        if all_tags.is_empty() {
+            ui.label("No tags in this BOM");
+        } else {
             ui.horizontal_wrapped(|ui| {
                 let mut tags_sorted: Vec<_> = all_tags.into_iter().collect();
                 tags_sorted.sort();
@@ -294,8 +309,8 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                     }
                 }
             });
-            ui.add_space(8.0);
         }
+        ui.add_space(8.0);
 
         // Filter parts: show if part has no tags, or has at least one visible tag
         let filtered_parts: Vec<_> = parts
@@ -307,11 +322,14 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
             .cloned()
             .collect();
 
-        // Sync table rows when data changes
+        // Sync table rows when data changes (data_version ensures other-view saves trigger refresh)
+        let total_qty: i32 = filtered_parts.iter().map(|(_, _, q, _, _)| *q).sum();
         let sync_key = (
+            app.data_version,
             request_id,
             parts.len(),
             filtered_parts.len(),
+            total_qty,
         );
         if app.bom_preview_last_sync_key != Some(sync_key) {
             let rows: Vec<BomPreviewRow> = filtered_parts
@@ -343,10 +361,8 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
             if ui.button("Print Preview").clicked() {
                 app.trigger_print_preview();
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            if ui.button("Export PDF").clicked() {
-                app.trigger_pdf_download();
-            }
+
         });
+    });
     });
 }

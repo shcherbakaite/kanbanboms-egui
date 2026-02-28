@@ -12,6 +12,9 @@ pub struct Bom {
     /// Arbitrary key-value fields associated with the part.
     #[serde(default)]
     pub custom_fields: HashMap<String, String>,
+    /// Cached count of BOM entries (line items) for this assembly. Recomputed on load and when entries change.
+    #[serde(default)]
+    pub bom_entry_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -52,16 +55,31 @@ static RE_5_2_3: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"(?i)\W*([0-9]{5})\s*-\s*([a-zA-Z]{2})\s*-\s*([0-9]{3})\s*").unwrap());
 static RE_EL: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"(?i)\W*EL\s*-\s*([0-9]{4})\s*").unwrap());
+/// Match any -XX- pattern (2 letters between dashes). Used for category extraction.
+static RE_CATEGORY: Lazy<regex::Regex> =
+    Lazy::new(|| regex::Regex::new(r"(?i)-([a-zA-Z]{2})-").unwrap());
+
+/// Recomputes bom_entry_count for all BOMs from bom_entries. Call after load and when entries change.
+pub fn recompute_bom_entry_counts(boms: &mut [Bom], bom_entries: &[BomEntry]) {
+    use std::collections::HashMap;
+    let mut counts: HashMap<Uuid, u32> = HashMap::new();
+    for e in bom_entries {
+        *counts.entry(e.bom_id).or_insert(0) += 1;
+    }
+    for b in boms.iter_mut() {
+        b.bom_entry_count = counts.get(&b.id).copied().unwrap_or(0);
+    }
+}
 
 /// Part categories used in Part Master (worksheet-style tabs).
 pub const PART_CATEGORIES: &[&str] = &["EA", "ME", "SD", "TR", "Others"];
 
-/// Category from part number suffix: 12345-XX-123 -> XX. Returns the actual 2-letter code (e.g. GH, EA).
-/// Parts that don't match the format (e.g. EL-1234) return "Others".
+/// Category from part number: extracts XX from any ..-XX-.. pattern. Returns the 2-letter code (e.g. SD, EA).
+/// Parts that don't match (e.g. EL-1234) return "Others".
 pub fn part_category(partno: &str) -> String {
     let upper = partno.to_uppercase();
-    if let Some(caps) = RE_5_2_3.captures(&upper) {
-        return caps[2].to_string();
+    if let Some(caps) = RE_CATEGORY.captures(&upper) {
+        return caps[1].to_string();
     }
     "Others".to_string()
 }

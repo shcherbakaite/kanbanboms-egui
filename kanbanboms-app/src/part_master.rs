@@ -16,6 +16,8 @@ pub struct PartMasterRow {
     pub partno: String,
     pub description: String,
     pub has_bom: bool,
+    /// Cached count of BOM entries (line items) for this assembly.
+    pub bom_entry_count: u32,
     /// Custom field values for this part (key -> value).
     pub custom_fields: HashMap<String, String>,
 }
@@ -43,8 +45,8 @@ fn part_has_bom(app: &KanbanBomsApp, part_id: Uuid) -> bool {
     app.bom_entries.iter().any(|e| e.bom_id == part_id)
 }
 
-const CENTERED_MAX_WIDTH: f32 = 700.0;
 const TAB_BAR_HEIGHT: f32 = 36.0;
+const CENTERED_MAX_WIDTH: f32 = 700.0;
 
 fn matches_filter(part: &Bom, filter: &str) -> bool {
     if filter.is_empty() {
@@ -80,15 +82,17 @@ fn part_rows_for_table(app: &KanbanBomsApp) -> Vec<PartMasterRow> {
             partno: p.partno.clone(),
             description: p.description.clone(),
             has_bom: part_has_bom(app, p.id),
+            bom_entry_count: p.bom_entry_count,
             custom_fields: p.custom_fields.clone(),
         })
         .collect()
 }
 
 /// Sync key to avoid replacing table rows every frame (preserves selection/scroll).
-fn part_master_sync_key(app: &KanbanBomsApp) -> (usize, String, usize, String) {
+fn part_master_sync_key(app: &KanbanBomsApp) -> (u64, usize, String, usize, String) {
     let custom_sig = all_custom_field_names(&app.boms).join("|");
     (
+        app.data_version,
         app.part_master_tab,
         app.part_master_filter.clone(),
         app.boms.len(),
@@ -110,6 +114,7 @@ impl RowCodec<PartMasterRow> for PartMasterCodec {
             partno: String::new(),
             description: String::new(),
             has_bom: false,
+            bom_entry_count: 0,
             custom_fields: HashMap::new(),
         }
     }
@@ -118,7 +123,11 @@ impl RowCodec<PartMasterRow> for PartMasterCodec {
         match column {
             0 => dst.push_str(&src_row.partno),
             1 => dst.push_str(&src_row.description),
-            2 => dst.push_str(if src_row.has_bom { "Yes" } else { "No" }),
+            2 => dst.push_str(&if src_row.has_bom {
+                format!("Yes ({})", src_row.bom_entry_count)
+            } else {
+                "No".to_string()
+            }),
             i if i >= 3 && i - 3 < self.custom_field_names.len() => {
                 let name = &self.custom_field_names[i - 3];
                 dst.push_str(src_row.custom_fields.get(name).map(|s| s.as_str()).unwrap_or(""));
@@ -178,8 +187,10 @@ impl RowViewer<PartMasterRow> for PartMasterViewer {
 
     fn column_render_config(&mut self, column: usize) -> TableColumnConfig {
         match column {
-            1 => TableColumnConfig::initial(280.0).resizable(true),
-            _ => TableColumnConfig::auto().resizable(true),
+            0 => TableColumnConfig::initial(140.0).resizable(true), // Part Number
+            1 => TableColumnConfig::remainder().resizable(true),     // Description - most space
+            2 => TableColumnConfig::initial(50.0).resizable(true),   // BOM
+            _ => TableColumnConfig::auto().resizable(true),          // Custom fields
         }
     }
 
@@ -203,7 +214,10 @@ impl RowViewer<PartMasterRow> for PartMasterViewer {
             }
             2 => {
                 if row.has_bom {
-                    ui.label(egui::RichText::new("📋").size(16.0));
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("📋").size(16.0));
+                        ui.label(format!("{}", row.bom_entry_count));
+                    });
                 } else {
                     ui.label(egui::RichText::new("—").color(egui::Color32::GRAY));
                 }
@@ -227,13 +241,17 @@ impl RowViewer<PartMasterRow> for PartMasterViewer {
         match column {
             0 => Some(ui.label(&row.partno)),
             1 => Some(ui.label(&row.description)),
-            2 => Some(ui.label(
+            2 => {
                 if row.has_bom {
-                    egui::RichText::new("📋").size(16.0)
+                    let r = ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("📋").size(16.0));
+                        ui.label(format!("{}", row.bom_entry_count));
+                    });
+                    Some(r.response)
                 } else {
-                    egui::RichText::new("—").color(egui::Color32::GRAY)
-                },
-            )),
+                    Some(ui.label(egui::RichText::new("—").color(egui::Color32::GRAY)))
+                }
+            },
             i if i >= 3 && i - 3 < self.custom_field_names.len() => {
                 let name = &self.custom_field_names[i - 3];
                 let val = row.custom_fields.get(name).map(|s| s.as_str()).unwrap_or("");
@@ -247,7 +265,10 @@ impl RowViewer<PartMasterRow> for PartMasterViewer {
         match column {
             0 => dst.partno = src.partno.clone(),
             1 => dst.description = src.description.clone(),
-            2 => dst.has_bom = src.has_bom,
+            2 => {
+                dst.has_bom = src.has_bom;
+                dst.bom_entry_count = src.bom_entry_count;
+            }
             i if i >= 3 && i - 3 < self.custom_field_names.len() => {
                 let name = &self.custom_field_names[i - 3];
                 let val = src.custom_fields.get(name).cloned().unwrap_or_default();
@@ -263,6 +284,7 @@ impl RowViewer<PartMasterRow> for PartMasterViewer {
             partno: String::new(),
             description: String::new(),
             has_bom: false,
+            bom_entry_count: 0,
             custom_fields: HashMap::new(),
         }
     }
@@ -305,11 +327,13 @@ impl RowViewer<PartMasterRow> for PartMasterViewer {
         Some([UiAction::CopySelection].into_iter().collect())
     }
 
-    fn custom_context_menu_items(&self) -> Vec<(Cow<'_, str>, String)> {
+    fn custom_context_menu_items(&self, row: &PartMasterRow) -> Vec<(Cow<'_, str>, String)> {
+        let pid = row.part_id.to_string();
         vec![
-            (Cow::Borrowed("Add to request"), "add_to_request".to_string()),
-            (Cow::Borrowed("Edit part"), "edit_part".to_string()),
-            (Cow::Borrowed("Edit BOM"), "edit_bom".to_string()),
+            (Cow::Borrowed("Add to request"), format!("add_to_request:{}", pid)),
+            (Cow::Borrowed("Edit part"), format!("edit_part:{}", pid)),
+            (Cow::Borrowed("Edit BOM"), format!("edit_bom:{}", pid)),
+            (Cow::Borrowed("Usage report"), format!("usage_report:{}", pid)),
         ]
     }
 
@@ -356,6 +380,14 @@ impl RowViewer<PartMasterRow> for PartMasterViewer {
 pub fn part_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, tab_id: Uuid) {
     use crate::dock::PartEditState;
 
+    let avail = ui.available_rect_before_wrap();
+    let width = avail.width().min(CENTERED_MAX_WIDTH);
+    let left = avail.left() + (avail.width() - width) / 2.0;
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(left, avail.top()),
+        egui::vec2(width, avail.height()),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
     // Resolve bom_id: existing part = tab_id, new part after save = part_edit_new_to_bom[tab_id]
     let bom_id = if app.boms.iter().any(|b| b.id == tab_id) {
         tab_id
@@ -438,6 +470,7 @@ pub fn part_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, tab_id: Uuid) {
     }
     ui.add_space(12.0);
 
+    let mut saved = false;
     ui.horizontal(|ui| {
         if ui.button("Save").clicked() {
             let partno = state.partno.trim().to_string();
@@ -461,7 +494,7 @@ pub fn part_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, tab_id: Uuid) {
                     bom.description = description;
                     bom.custom_fields = custom_fields;
                     state.error = None;
-                    app.part_master_last_sync_key = None;
+                    saved = true;
                 }
             } else {
                 let partno_norm = crate::models::normalize_partno(&partno);
@@ -478,16 +511,324 @@ pub fn part_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, tab_id: Uuid) {
                     batch_quantity: 0,
                     location: String::new(),
                     custom_fields,
+                    bom_entry_count: 0,
                 });
                 app.part_edit_new_to_bom.insert(tab_id, new_id);
                 state.error = None;
-                app.part_master_last_sync_key = None;
+                saved = true;
             }
         }
         if ui.button("Cancel").clicked() {
             app.part_master_close_edit_tab = Some(tab_id);
         }
     });
+    if saved {
+        app.mark_dirty();
+    }
+    });
+}
+
+/// Row type for the Usage Report data table (BOMs that use a given part).
+#[derive(Debug, Clone)]
+pub struct UsageReportRow {
+    pub bom_id: Uuid,
+    pub partno: String,
+    pub description: String,
+    pub quantity: i32,
+    pub tags: String,
+}
+
+/// Codec for copy-to-clipboard (TSV). Decode not used (read-only table).
+struct UsageReportCodec;
+
+impl RowCodec<UsageReportRow> for UsageReportCodec {
+    type DeserializeError = ();
+
+    fn create_empty_decoded_row(&mut self) -> UsageReportRow {
+        UsageReportRow {
+            bom_id: Uuid::nil(),
+            partno: String::new(),
+            description: String::new(),
+            quantity: 0,
+            tags: String::new(),
+        }
+    }
+
+    fn encode_column(&mut self, src_row: &UsageReportRow, column: usize, dst: &mut String) {
+        match column {
+            0 => dst.push_str(&src_row.partno),
+            1 => dst.push_str(&src_row.description),
+            2 => dst.push_str(&src_row.quantity.to_string()),
+            3 => dst.push_str(&src_row.tags),
+            _ => {}
+        }
+    }
+
+    fn decode_column(
+        &mut self,
+        _src_data: &str,
+        _column: usize,
+        _dst_row: &mut UsageReportRow,
+    ) -> Result<(), DecodeErrorBehavior> {
+        Ok(())
+    }
+}
+
+pub struct UsageReportViewer {
+    pub pending_custom_action: Option<(usize, String)>,
+}
+
+impl Default for UsageReportViewer {
+    fn default() -> Self {
+        Self {
+            pending_custom_action: None,
+        }
+    }
+}
+
+impl RowViewer<UsageReportRow> for UsageReportViewer {
+    fn num_columns(&mut self) -> usize {
+        4
+    }
+
+    fn column_name(&mut self, column: usize) -> Cow<'static, str> {
+        match column {
+            0 => Cow::Borrowed("Part Number"),
+            1 => Cow::Borrowed("Description"),
+            2 => Cow::Borrowed("Qty"),
+            3 => Cow::Borrowed("Tags"),
+            _ => Cow::Borrowed(""),
+        }
+    }
+
+    fn column_render_config(&mut self, column: usize) -> TableColumnConfig {
+        match column {
+            0 => TableColumnConfig::initial(140.0).resizable(true),
+            1 => TableColumnConfig::remainder().resizable(true),
+            2 => TableColumnConfig::initial(50.0).resizable(true),
+            3 => TableColumnConfig::initial(100.0).resizable(true),
+            _ => TableColumnConfig::auto().resizable(true),
+        }
+    }
+
+    fn is_sortable_column(&mut self, column: usize) -> bool {
+        column < 4
+    }
+
+    fn compare_cell(
+        &self,
+        row_a: &UsageReportRow,
+        row_b: &UsageReportRow,
+        column: usize,
+    ) -> std::cmp::Ordering {
+        match column {
+            0 => row_a.partno.cmp(&row_b.partno),
+            1 => row_a.description.cmp(&row_b.description),
+            2 => row_a.quantity.cmp(&row_b.quantity),
+            3 => row_a.tags.cmp(&row_b.tags),
+            _ => std::cmp::Ordering::Equal,
+        }
+    }
+
+    fn try_create_codec(&mut self, is_encoding: bool) -> Option<impl RowCodec<UsageReportRow>> {
+        if is_encoding {
+            Some(UsageReportCodec)
+        } else {
+            None
+        }
+    }
+
+    fn show_cell_view(&mut self, ui: &mut egui::Ui, row: &UsageReportRow, column: usize) {
+        match column {
+            0 => {
+                ui.label(&row.partno);
+            }
+            1 => {
+                ui.label(&row.description);
+            }
+            2 => {
+                ui.label(row.quantity.to_string());
+            }
+            3 => {
+                ui.label(if row.tags.is_empty() { "—" } else { &row.tags });
+            }
+            _ => {}
+        }
+    }
+
+    fn show_cell_editor(
+        &mut self,
+        ui: &mut egui::Ui,
+        row: &mut UsageReportRow,
+        column: usize,
+    ) -> Option<egui::Response> {
+        match column {
+            0 => Some(ui.label(&row.partno)),
+            1 => Some(ui.label(&row.description)),
+            2 => Some(ui.label(row.quantity.to_string())),
+            3 => Some(ui.label(if row.tags.is_empty() { "—" } else { &row.tags })),
+            _ => None,
+        }
+    }
+
+    fn set_cell_value(&mut self, src: &UsageReportRow, dst: &mut UsageReportRow, column: usize) {
+        match column {
+            0 => dst.partno = src.partno.clone(),
+            1 => dst.description = src.description.clone(),
+            2 => dst.quantity = src.quantity,
+            3 => dst.tags = src.tags.clone(),
+            _ => {}
+        }
+    }
+
+    fn new_empty_row(&mut self) -> UsageReportRow {
+        UsageReportRow {
+            bom_id: Uuid::nil(),
+            partno: String::new(),
+            description: String::new(),
+            quantity: 0,
+            tags: String::new(),
+        }
+    }
+
+    fn confirm_row_deletion_by_ui(&mut self, _row: &UsageReportRow) -> bool {
+        false
+    }
+
+    fn hotkeys(&mut self, context: &UiActionContext) -> Vec<(KeyboardShortcut, UiAction)> {
+        if context.cursor.is_editing() {
+            return Vec::new();
+        }
+        let none = Modifiers::NONE;
+        let ctrl = Modifiers::CTRL;
+        type MD = MoveDirection;
+        vec![
+            (KeyboardShortcut::new(ctrl, Key::C), UiAction::CopySelection),
+            (KeyboardShortcut::new(none, Key::ArrowUp), UiAction::MoveSelection(MD::Up)),
+            (KeyboardShortcut::new(none, Key::ArrowDown), UiAction::MoveSelection(MD::Down)),
+            (KeyboardShortcut::new(none, Key::ArrowLeft), UiAction::MoveSelection(MD::Left)),
+            (KeyboardShortcut::new(none, Key::ArrowRight), UiAction::MoveSelection(MD::Right)),
+            (KeyboardShortcut::new(ctrl, Key::A), UiAction::SelectAll),
+            (KeyboardShortcut::new(none, Key::PageUp), UiAction::NavPageUp),
+            (KeyboardShortcut::new(none, Key::PageDown), UiAction::NavPageDown),
+            (KeyboardShortcut::new(none, Key::Home), UiAction::NavTop),
+            (KeyboardShortcut::new(none, Key::End), UiAction::NavBottom),
+        ]
+    }
+
+    fn trivial_config(&mut self) -> egui_data_table::viewer::TrivialConfig {
+        egui_data_table::viewer::TrivialConfig {
+            table_row_height: Some(22.0),
+            max_undo_history: 0,
+            max_scroll_height: None,
+        }
+    }
+
+    fn allowed_context_menu_actions(&self) -> Option<HashSet<UiAction>> {
+        Some([UiAction::CopySelection].into_iter().collect())
+    }
+
+    fn custom_context_menu_items(&self, row: &UsageReportRow) -> Vec<(Cow<'_, str>, String)> {
+        vec![(
+            Cow::Borrowed("Edit BOM"),
+            format!("edit_bom:{}", row.bom_id),
+        )]
+    }
+
+    fn custom_action_sink(&mut self) -> Option<&mut Option<(usize, String)>> {
+        Some(&mut self.pending_custom_action)
+    }
+}
+
+fn usage_report_rows(app: &KanbanBomsApp, part_id: Uuid) -> Vec<UsageReportRow> {
+    let mut usages: Vec<_> = app
+        .bom_entries
+        .iter()
+        .filter(|e| e.part_id == part_id && !e.disabled)
+        .map(|e| (e.bom_id, e.quantity, e.tags.clone()))
+        .collect();
+    usages.sort_by(|a, b| {
+        let bom_a = app.boms.iter().find(|x| x.id == a.0).map(|x| &x.partno);
+        let bom_b = app.boms.iter().find(|x| x.id == b.0).map(|x| &x.partno);
+        bom_a.cmp(&bom_b)
+    });
+    usages
+        .into_iter()
+        .filter_map(|(bom_id, qty, tags)| {
+            let bom = app.boms.iter().find(|b| b.id == bom_id)?;
+            Some(UsageReportRow {
+                bom_id,
+                partno: bom.partno.clone(),
+                description: bom.description.clone(),
+                quantity: qty,
+                tags: tags.join(", "),
+            })
+        })
+        .collect()
+}
+
+fn usage_report_sync_key(app: &KanbanBomsApp, part_id: Uuid) -> (u64, Uuid, usize) {
+    let count = app
+        .bom_entries
+        .iter()
+        .filter(|e| e.part_id == part_id && !e.disabled)
+        .count();
+    (app.data_version, part_id, count)
+}
+
+/// UI for the Usage Report dock tab: lists all BOMs where the part is used.
+pub fn usage_report_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, part_id: Uuid) {
+    let part = match app.boms.iter().find(|b| b.id == part_id) {
+        Some(b) => b.clone(),
+        None => {
+            ui.label("Part not found.");
+            return;
+        }
+    };
+
+    ui.heading(format!("Usage report: {}", part.partno));
+    ui.label(&part.description);
+    ui.add_space(8.0);
+
+    let sync_key = usage_report_sync_key(app, part_id);
+    if app.usage_report_last_sync_key.as_ref() != Some(&sync_key) {
+        let rows = usage_report_rows(app, part_id);
+        app.usage_report_table.replace(rows);
+        app.usage_report_last_sync_key = Some(sync_key);
+    }
+
+    if app.usage_report_table.is_empty() {
+        ui.label("This part is not used in any BOM.");
+        return;
+    }
+
+    ui.strong(format!("Used in {} BOM(s):", app.usage_report_table.len()));
+    ui.add_space(4.0);
+
+    let table_area_height = ui.available_rect_before_wrap().height();
+    let mut viewer = UsageReportViewer::default();
+    ui.add(
+        Renderer::new(&mut app.usage_report_table, &mut viewer)
+            .with_table_row_height(22.0)
+            .with_max_scroll_height(table_area_height.max(100.0)),
+    );
+
+    if let Some((_row_idx, id)) = viewer.pending_custom_action.take() {
+        let (action, bom_id) = if let Some((a, u)) = id.split_once(':') {
+            (a, Uuid::parse_str(u).ok())
+        } else {
+            (id.as_str(), None)
+        };
+        let bom_id = bom_id.or_else(|| {
+            app.usage_report_table
+                .iter()
+                .nth(_row_idx)
+                .map(|r| r.bom_id)
+        });
+        if let (Some(bom_id), "edit_bom") = (bom_id, action) {
+            app.pending_open_bom = Some(bom_id);
+        }
+    }
 }
 
 /// Ensure "All" is always present in visible categories.
@@ -525,6 +866,7 @@ pub fn part_master_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                             && !app.part_master_visible_categories.iter().any(|c| c == &cat)
                         {
                             app.part_master_visible_categories.push(cat);
+                            app.mark_dirty();
                         }
                         app.part_master_add_category_open = false;
                         app.part_master_add_category_input.clear();
@@ -541,34 +883,32 @@ pub fn part_master_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
         }
     }
     let avail = ui.available_rect_before_wrap();
-    let width = avail.width().min(CENTERED_MAX_WIDTH);
-        let left = avail.left() + (avail.width() - width) / 2.0;
-        let content_height = (avail.bottom() - TAB_BAR_HEIGHT - avail.top()).max(0.0);
-        let main_rect = egui::Rect::from_min_size(
-            egui::pos2(left, avail.top()),
-            egui::vec2(width, content_height),
-        );
-        let tab_rect = egui::Rect::from_min_size(
-            egui::pos2(avail.left(), avail.bottom() - TAB_BAR_HEIGHT),
-            egui::vec2(avail.width(), TAB_BAR_HEIGHT),
-        );
+    let content_height = (avail.bottom() - TAB_BAR_HEIGHT - avail.top()).max(0.0);
+    let main_rect = egui::Rect::from_min_size(
+        egui::pos2(avail.left(), avail.top()),
+        egui::vec2(avail.width(), content_height),
+    );
+    let tab_rect = egui::Rect::from_min_size(
+        egui::pos2(avail.left(), avail.bottom() - TAB_BAR_HEIGHT),
+        egui::vec2(avail.width(), TAB_BAR_HEIGHT),
+    );
 
-        ui.scope_builder(egui::UiBuilder::new().max_rect(main_rect), |ui| {
+    ui.scope_builder(egui::UiBuilder::new().max_rect(main_rect), |ui| {
             ui.heading("Part Master");
             ui.add_space(8.0);
 
+            if ui.button("New part").clicked() {
+                app.part_master_edit_part = Some(None);
+            }
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button("New part").clicked() {
-                    app.part_master_edit_part = Some(None);
-                }
-                ui.separator();
                 ui.label("Search:");
                 ui.add(
                     egui::TextEdit::singleline(&mut app.part_master_filter)
                         .desired_width(200.0)
                         .hint_text("part number or description…"),
                 );
-                if !app.part_master_filter.is_empty() && ui.button("✕").clicked() {
+                if !app.part_master_filter.is_empty() && ui.button("Clear").clicked() {
                     app.part_master_filter.clear();
                 }
             });
@@ -580,7 +920,7 @@ pub fn part_master_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                 .map(|s| s.as_str())
                 .unwrap_or("Others");
             let sync_key = part_master_sync_key(app);
-            if app.part_master_last_sync_key != Some(sync_key.clone()) {
+            if app.part_master_last_sync_key.as_ref() != Some(&sync_key) {
                 let rows = part_rows_for_table(app);
                 app.part_master_table.replace(rows);
                 app.part_master_last_sync_key = Some(sync_key);
@@ -601,16 +941,31 @@ pub fn part_master_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                         .with_table_row_height(22.0)
                         .with_max_scroll_height(table_area_height.max(100.0)),
                 );
-                if let Some((row_idx, id)) = viewer.pending_custom_action.take() {
-                    let part_id = app.part_master_table.iter().nth(row_idx).map(|r| r.part_id);
-                    if let Some(pid) = part_id {
-                        match id.as_str() {
+                if let Some((_row_idx, id)) = viewer.pending_custom_action.take() {
+                    // Parse part_id from action_id (format "action:uuid") to avoid wrong row when
+                    // table data changes between context menu open and click
+                    let (action, pid) = if let Some((a, u)) = id.split_once(':') {
+                        (a, Uuid::parse_str(u).ok())
+                    } else {
+                        (id.as_str(), None)
+                    };
+                    let pid = pid.or_else(|| {
+                        app.part_master_table
+                            .iter()
+                            .nth(_row_idx)
+                            .map(|r| r.part_id)
+                    });
+                    if let Some(pid) = pid {
+                        match action {
                             "add_to_request" => app.add_assembly_to_request(pid),
                             "edit_part" => {
                                 app.part_master_edit_part = Some(Some(pid));
                             }
                             "edit_bom" => {
                                 app.pending_open_bom = Some(pid);
+                            }
+                            "usage_report" => {
+                                app.part_master_usage_report = Some(pid);
                             }
                             _ => {}
                         }
@@ -620,8 +975,8 @@ pub fn part_master_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
     });
 
     ui.scope_builder(egui::UiBuilder::new().max_rect(tab_rect), |ui| {
-            egui::Frame::group(ui.style()).inner_margin(6.0).show(ui, |ui| {
-                ui.horizontal(|ui| {
+        egui::Frame::group(ui.style()).inner_margin(6.0).show(ui, |ui| {
+            ui.horizontal(|ui| {
                     let categories: Vec<String> =
                         app.part_master_visible_categories.iter().cloned().collect();
                     for (i, name) in categories.iter().enumerate() {
@@ -649,6 +1004,7 @@ pub fn part_master_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                             if can_remove {
                                 if ui.button("Remove tab").clicked() {
                                     app.part_master_visible_categories.remove(i);
+                                    app.mark_dirty();
                                     if app.part_master_tab >= app.part_master_visible_categories.len() {
                                         app.part_master_tab =
                                             app.part_master_visible_categories.len().saturating_sub(1);
@@ -671,6 +1027,6 @@ pub fn part_master_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                         ui.visuals_mut().override_text_color = None;
                     }
                 });
-            });
+        });
     });
 }

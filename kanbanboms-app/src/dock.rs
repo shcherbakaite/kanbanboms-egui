@@ -9,6 +9,9 @@ use egui::WidgetText;
 use egui_dock::{DockArea, DockState, Style, TabViewer};
 use uuid::Uuid;
 
+/// Max width for centered request content (Edit/Preview). Matches request_edit and bom_preview.
+const REQUEST_CENTERED_MAX_WIDTH: f32 = 700.0;
+
 /// Per-tab state for Part Edit form.
 #[derive(Debug, Clone, Default)]
 pub struct PartEditState {
@@ -29,6 +32,8 @@ pub enum DockTab {
     Request(Uuid),
     /// Part edit/create. Uuid = tab id (part id for existing, generated for new).
     PartEdit(Uuid),
+    /// Usage report: lists all BOMs where a part (part_id) is used.
+    UsageReport(Uuid),
 }
 
 impl DockTab {
@@ -66,6 +71,12 @@ impl DockTab {
                     format!("{}", machine)
                 })
                 .unwrap_or_else(|| "Request".to_string()),
+            DockTab::UsageReport(part_id) => app
+                .boms
+                .iter()
+                .find(|b| b.id == *part_id)
+                .map(|b| format!("Usage: {}", b.partno))
+                .unwrap_or_else(|| "Usage Report".to_string()),
         }
     }
 }
@@ -112,9 +123,19 @@ impl TabViewer for AppTabViewer<'_> {
                     .entry(*req_id)
                     .or_default();
 
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut state.preview_mode, false, "Edit");
-                    ui.selectable_value(&mut state.preview_mode, true, "Preview");
+                // Align Edit/Preview buttons with the centered content below (same as request_edit/bom_preview)
+                let avail = ui.available_rect_before_wrap();
+                let width = avail.width().min(REQUEST_CENTERED_MAX_WIDTH);
+                let left = avail.left() + (avail.width() - width) / 2.0;
+                let button_rect = egui::Rect::from_min_size(
+                    egui::pos2(left, avail.top()),
+                    egui::vec2(width, 28.0),
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(button_rect), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut state.preview_mode, false, "Edit");
+                        ui.selectable_value(&mut state.preview_mode, true, "Preview");
+                    });
                 });
                 ui.add_space(4.0);
 
@@ -125,6 +146,9 @@ impl TabViewer for AppTabViewer<'_> {
                 }
 
                 self.app.current_request_id = prev_req;
+            }
+            DockTab::UsageReport(part_id) => {
+                crate::part_master::usage_report_ui(self.app, ui, *part_id);
             }
         }
     }
@@ -175,6 +199,14 @@ pub fn ensure_dock_tabs(dock_state: &mut DockState<DockTab>, app: &mut KanbanBom
         let has_bom = surface.tabs().any(|t| matches!(t, DockTab::BomEdit(id) if *id == bom_id));
         if !has_bom {
             surface.push_to_first_leaf(DockTab::BomEdit(bom_id));
+        }
+    }
+
+    // Open Usage Report tab when Part Master "Usage report" is clicked
+    if let Some(part_id) = app.part_master_usage_report.take() {
+        let has_report = surface.tabs().any(|t| matches!(t, DockTab::UsageReport(id) if *id == part_id));
+        if !has_report {
+            surface.push_to_first_leaf(DockTab::UsageReport(part_id));
         }
     }
 
