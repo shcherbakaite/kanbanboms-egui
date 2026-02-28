@@ -1,4 +1,6 @@
 Part Number,Description,Quantity
-20001-EF-001,Steel Bolt M8,40
-20002-GH-002,Hex Nut M8,40
-20003-IJ-003,Washer 8mm,80
+10001-AB-001,Main Assembly,24
+10002-CD-002,Sub Assembly,2
+20002-GH-002,Hex Nut M8,6
+20003-IJ-003,Washer 8mm,12
+EL-1234,Electronic Module,17

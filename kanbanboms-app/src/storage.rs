@@ -1,5 +1,9 @@
-use crate::models::{Bom, BomEntry, Request, RequestEntry};
+use crate::models::{Bom, BomEntry, BomRevision, Request, RequestEntry};
 use serde::{Deserialize, Serialize};
+
+#[cfg(target_arch = "wasm32")]
+use gloo_storage::Storage;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -8,6 +12,12 @@ pub struct StoredData {
     pub bom_entries: Vec<BomEntry>,
     pub requests: Vec<Request>,
     pub request_entries: Vec<RequestEntry>,
+    /// Revisions per BOM: bom_id -> list of revisions (newest first)
+    #[serde(default)]
+    pub bom_revisions: HashMap<Uuid, Vec<BomRevision>>,
+    /// Next revision number per BOM
+    #[serde(default)]
+    pub bom_revision_next: HashMap<Uuid, u32>,
 }
 
 impl StoredData {
@@ -87,6 +97,7 @@ pub fn parse_csv_import(csv_text: &str) -> Result<StoredData, String> {
                     description: asm_desc,
                     batch_quantity: 1,
                     location: String::new(),
+                    custom_fields: HashMap::new(),
                 });
                 id
             });
@@ -100,6 +111,7 @@ pub fn parse_csv_import(csv_text: &str) -> Result<StoredData, String> {
                     description: comp_desc,
                     batch_quantity: 0,
                     location: String::new(),
+                    custom_fields: HashMap::new(),
                 });
                 id
             });

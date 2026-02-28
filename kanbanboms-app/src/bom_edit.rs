@@ -1,142 +1,552 @@
 use crate::app::KanbanBomsApp;
-use crate::bom_search::bom_search_ui;
-use egui;
+use crate::bom_search::search_boms;
+use crate::models::{Bom, BomEntry, BomRevision};
+use egui::{Key, KeyboardShortcut, Modifiers};
+use egui_data_table::viewer::{
+    DecodeErrorBehavior, MoveDirection, RowCodec, UiActionContext,
+};
+use egui_data_table::{Renderer, RowViewer, UiAction};
+use std::borrow::Cow;
+use std::collections::HashSet;
+use uuid::Uuid;
 
 const CENTERED_MAX_WIDTH: f32 = 700.0;
+const MAX_AUTOCOMPLETE_ITEMS: usize = 10;
 
-pub fn bom_edit_ui(app: &mut KanbanBomsApp, ctx: &egui::Context) {
-    egui::CentralPanel::default().show(ctx, |ui| {
-        let avail = ui.available_rect_before_wrap();
-        let width = avail.width().min(CENTERED_MAX_WIDTH);
-        let left = avail.left() + (avail.width() - width) / 2.0;
-        let rect = egui::Rect::from_min_size(egui::pos2(left, avail.top()), egui::vec2(width, avail.height()));
-        ui.allocate_new_ui(egui::UiBuilder::default().max_rect(rect), |ui| {
-        ui.heading("BOM Editor");
-        ui.add_space(8.0);
+/// Row type for the BOM Edit data table.
+#[derive(Debug, Clone)]
+pub struct BomEditRow {
+    pub part_id: Uuid,
+    pub partno: String,
+    pub description: String,
+    pub quantity: i32,
+    pub tags: String,
+    pub disabled: bool,
+}
 
-        ui.horizontal(|ui| {
-            ui.label("Select BOM to edit:");
-            let boms: Vec<_> = app.boms.iter().collect();
-            let selected_partno = app
-                .selected_bom_for_edit
-                .and_then(|id| app.boms.iter().find(|b| b.id == id).map(|b| b.partno.clone()))
-                .unwrap_or_default();
-            egui::ComboBox::from_id_salt("bom_select")
-                .selected_text(if selected_partno.is_empty() {
-                    "Select...".to_string()
-                } else {
-                    selected_partno.clone()
-                })
-                .show_ui(ui, |ui| {
-                    for bom in &boms {
-                        let text = format!("{} - {}", bom.partno, bom.description);
-                        let is_selected = app.selected_bom_for_edit == Some(bom.id);
-                        if ui.selectable_label(is_selected, &text).clicked() {
-                            app.selected_bom_for_edit = Some(bom.id);
-                            app.bom_edit_search_modal = false;
-                        }
-                    }
-                });
-        });
+/// Get bom_entries for the given bom_id, either from current state or from a specific revision.
+fn bom_entries_for_edit(app: &KanbanBomsApp, bom_id: Uuid) -> Vec<BomEntry> {
+    if let Some(rev) = app.bom_edit_viewing_revision {
+        app.bom_revisions
+            .get(&bom_id)
+            .and_then(|revs| revs.iter().find(|r| r.revision == rev))
+            .map(|r| r.entries.clone())
+            .unwrap_or_default()
+    } else {
+        app.bom_entries
+            .iter()
+            .filter(|e| e.bom_id == bom_id)
+            .cloned()
+            .collect()
+    }
+}
 
-        if let Some(bom_id) = app.selected_bom_for_edit {
-            let bom = match app.boms.iter().find(|b| b.id == bom_id) {
-                Some(b) => b.clone(),
-                None => return,
-            };
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.label("Assembly:");
-                ui.label(&bom.partno);
-                ui.label("-");
-                ui.label(&bom.description);
+/// Build rows from bom_entries for the given bom_id.
+fn bom_edit_rows_for_table(app: &KanbanBomsApp, entries: &[BomEntry]) -> Vec<BomEditRow> {
+    let boms_map = app.boms_by_id();
+    entries
+        .iter()
+        .filter_map(|e| {
+            boms_map.get(&e.part_id).map(|part| BomEditRow {
+                part_id: part.id,
+                partno: part.partno.clone(),
+                description: part.description.clone(),
+                quantity: e.quantity,
+                tags: e.tags.join(" "),
+                disabled: e.disabled,
+            })
+        })
+        .collect()
+}
+
+/// Sync key to avoid replacing table rows every frame.
+fn bom_edit_sync_key(bom_id: Uuid, entries_count: usize, viewing_revision: Option<u32>) -> (Uuid, usize, Option<u32>) {
+    (bom_id, entries_count, viewing_revision)
+}
+
+/// Apply table rows back to bom_entries. Removes entries not in table, updates existing, adds new.
+/// Call this every frame when the BOM editor table has data so changes reflect in requests/preview.
+pub fn sync_table_to_bom_entries(app: &mut KanbanBomsApp, bom_id: Uuid, rows: &[BomEditRow]) {
+    let current_part_ids: HashSet<Uuid> = rows
+        .iter()
+        .filter(|r| r.part_id != Uuid::nil())
+        .map(|r| r.part_id)
+        .collect();
+
+    // Remove entries for parts no longer in table
+    app.bom_entries
+        .retain(|e| e.bom_id != bom_id || current_part_ids.contains(&e.part_id));
+
+    for row in rows {
+        if row.part_id == Uuid::nil() {
+            continue;
+        }
+        let tags: Vec<String> = row
+            .tags
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
+        if let Some(entry) = app
+            .bom_entries
+            .iter_mut()
+            .find(|e| e.bom_id == bom_id && e.part_id == row.part_id)
+        {
+            entry.quantity = row.quantity;
+            entry.tags = tags;
+            entry.disabled = row.disabled;
+        } else {
+            app.bom_entries.push(BomEntry {
+                bom_id,
+                part_id: row.part_id,
+                quantity: row.quantity,
+                disabled: row.disabled,
+                tags,
             });
-            ui.add_space(4.0);
+        }
+    }
+}
 
-            let entries: Vec<_> = app
-                .bom_entries
-                .iter()
-                .filter(|e| e.bom_id == bom_id)
-                .cloned()
-                .collect();
+/// Codec for copy-to-clipboard (TSV).
+pub struct BomEditCodec;
 
-            let mut to_remove = None;
-            egui::Grid::new("bom_edit_grid")
-                .num_columns(6)
-                .spacing([12.0, 4.0])
-                .show(ui, |ui| {
-                    ui.strong("Part");
-                    ui.strong("Description");
-                    ui.strong("Qty");
-                    ui.strong("Tags");
-                    ui.strong("Disabled");
-                    ui.strong("");
-                    ui.end_row();
+impl RowCodec<BomEditRow> for BomEditCodec {
+    type DeserializeError = ();
 
-                    for entry in &entries {
-                        if let Some(part) = app.boms.iter().find(|b| b.id == entry.part_id) {
-                            if let Some(be) = app.bom_entries.iter_mut().find(|e| e.bom_id == bom_id && e.part_id == entry.part_id) {
-                                ui.label(&part.partno);
-                                ui.label(&part.description);
-                                ui.add(egui::DragValue::new(&mut be.quantity).speed(0.5).range(1..=10000));
-                                let key = (bom_id, entry.part_id);
-                                let mut tags_edit = app.bom_edit_tags_buffer
-                                    .get(&key)
-                                    .cloned()
-                                    .unwrap_or_else(|| be.tags.join(" "));
-                                let response = ui.add(egui::TextEdit::singleline(&mut tags_edit).desired_width(120.0).id(egui::Id::new(("bom_tags", key))));
-                                if response.changed() {
-                                    app.bom_edit_tags_buffer.insert(key, tags_edit.clone());
+    fn create_empty_decoded_row(&mut self) -> BomEditRow {
+        BomEditRow {
+            part_id: Uuid::nil(),
+            partno: String::new(),
+            description: String::new(),
+            quantity: 1,
+            tags: String::new(),
+            disabled: false,
+        }
+    }
+
+    fn encode_column(&mut self, src_row: &BomEditRow, column: usize, dst: &mut String) {
+        match column {
+            0 => dst.push_str(&src_row.partno),
+            1 => dst.push_str(&src_row.description),
+            2 => dst.push_str(&src_row.quantity.to_string()),
+            3 => dst.push_str(&src_row.tags),
+            4 => dst.push_str(if src_row.disabled { "Yes" } else { "No" }),
+            _ => {}
+        }
+    }
+
+    fn decode_column(
+        &mut self,
+        src_data: &str,
+        column: usize,
+        dst_row: &mut BomEditRow,
+    ) -> Result<(), DecodeErrorBehavior> {
+        match column {
+            0 => dst_row.partno = src_data.to_string(),
+            1 => dst_row.description = src_data.to_string(),
+            2 => dst_row.quantity = src_data.parse().unwrap_or(1),
+            3 => dst_row.tags = src_data.to_string(),
+            4 => dst_row.disabled = src_data.eq_ignore_ascii_case("yes"),
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+/// Viewer for BOM Edit table with autocomplete on Part Number and Description.
+pub struct BomEditViewer {
+    pub boms: Vec<Bom>,
+    /// Part IDs already in this BOM (to avoid duplicate suggestions when adding)
+    pub existing_part_ids: HashSet<Uuid>,
+    /// System clipboard content for paste (e.g. from arboard)
+    pub system_clipboard: Option<String>,
+}
+
+impl BomEditViewer {
+    fn search_parts(&self, query: &str, exclude_part_ids: &HashSet<Uuid>) -> Vec<&Bom> {
+        if query.trim().is_empty() {
+            return Vec::new();
+        }
+        let mut results = search_boms(&self.boms, query);
+        results.retain(|b| !exclude_part_ids.contains(&b.id) && !self.existing_part_ids.contains(&b.id));
+        results.truncate(MAX_AUTOCOMPLETE_ITEMS);
+        results
+    }
+}
+
+impl RowViewer<BomEditRow> for BomEditViewer {
+    fn num_columns(&mut self) -> usize {
+        5
+    }
+
+    fn column_name(&mut self, column: usize) -> Cow<'static, str> {
+        match column {
+            0 => Cow::Borrowed("Part Number"),
+            1 => Cow::Borrowed("Description"),
+            2 => Cow::Borrowed("Qty"),
+            3 => Cow::Borrowed("Tags"),
+            4 => Cow::Borrowed("Disabled"),
+            _ => Cow::Borrowed(""),
+        }
+    }
+
+    fn try_create_codec(&mut self, _is_encoding: bool) -> Option<impl RowCodec<BomEditRow>> {
+        Some(BomEditCodec)
+    }
+
+    fn show_cell_view(&mut self, ui: &mut egui::Ui, row: &BomEditRow, column: usize) {
+        match column {
+            0 => {
+                ui.label(&row.partno);
+            }
+            1 => {
+                ui.label(&row.description);
+            }
+            2 => {
+                ui.label(row.quantity.to_string());
+            }
+            3 => {
+                ui.label(&row.tags);
+            }
+            4 => {
+                ui.label(if row.disabled { "Yes" } else { "No" });
+            }
+            _ => {}
+        }
+    }
+
+    fn show_cell_editor(
+        &mut self,
+        ui: &mut egui::Ui,
+        row: &mut BomEditRow,
+        column: usize,
+    ) -> Option<egui::Response> {
+        match column {
+            0 | 1 => {
+                let popup_id = ui.auto_id_with("bom_autocomplete").with(column);
+                let query = if column == 0 {
+                    &mut row.partno
+                } else {
+                    &mut row.description
+                };
+
+                let response = ui.add(
+                    egui::TextEdit::singleline(query)
+                        .desired_width(120.0)
+                        .id(ui.auto_id_with("bom_edit").with(column)),
+                );
+
+                // Show autocomplete when focused and has text
+                if (response.has_focus() || response.gained_focus()) && !query.trim().is_empty() {
+                    ui.memory_mut(|m| m.open_popup(popup_id));
+                }
+
+                let exclude: HashSet<Uuid> = std::iter::once(row.part_id)
+                    .filter(|id| *id != Uuid::nil())
+                    .collect();
+                let matches: Vec<(Uuid, String, String)> = self
+                    .search_parts(query, &exclude)
+                    .into_iter()
+                    .map(|b| (b.id, b.partno.clone(), b.description.clone()))
+                    .collect();
+
+                let mut selected: Option<(Uuid, String, String)> = None;
+                egui::popup_below_widget(
+                    ui,
+                    popup_id,
+                    &response,
+                    egui::PopupCloseBehavior::CloseOnClick,
+                    |ui: &mut egui::Ui| {
+                        ui.set_min_width(280.0);
+                        ui.set_max_height(200.0);
+                        if matches.is_empty() {
+                            ui.label("No matching parts");
+                            return;
+                        }
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            for (part_id, partno, description) in &matches {
+                                let text = format!("{} - {}", partno, description);
+                                if ui.selectable_label(false, &text).clicked() {
+                                    selected = Some((*part_id, partno.clone(), description.clone()));
                                 }
-                                if response.lost_focus() {
-                                    be.tags = tags_edit
-                                        .split_whitespace()
-                                        .map(|s| s.to_string())
-                                        .collect();
-                                    app.bom_edit_tags_buffer.remove(&key);
-                                }
-                                ui.checkbox(&mut be.disabled, "");
-                                if ui.small_button("✕").clicked() {
-                                    to_remove = Some((bom_id, entry.part_id));
-                                }
-                                ui.end_row();
+                            }
+                        });
+                    },
+                );
+
+                // Apply selected autocomplete (set part_id, partno, description)
+                if let Some((part_id, partno, description)) = selected {
+                    row.part_id = part_id;
+                    row.partno = partno;
+                    row.description = description;
+                }
+
+                Some(response)
+            }
+            2 => Some(ui.add(
+                egui::DragValue::new(&mut row.quantity)
+                    .speed(0.5)
+                    .range(1..=10000),
+            )),
+            3 => Some(ui.add(
+                egui::TextEdit::singleline(&mut row.tags).desired_width(120.0),
+            )),
+            4 => Some(ui.checkbox(&mut row.disabled, "")),
+            _ => None,
+        }
+    }
+
+    fn set_cell_value(&mut self, src: &BomEditRow, dst: &mut BomEditRow, column: usize) {
+        match column {
+            0 => {
+                dst.partno = src.partno.clone();
+                dst.part_id = src.part_id;
+                dst.description = src.description.clone();
+            }
+            1 => {
+                dst.description = src.description.clone();
+                dst.partno = src.partno.clone();
+                dst.part_id = src.part_id;
+            }
+            2 => dst.quantity = src.quantity,
+            3 => dst.tags = src.tags.clone(),
+            4 => dst.disabled = src.disabled,
+            _ => {}
+        }
+    }
+
+    fn new_empty_row(&mut self) -> BomEditRow {
+        BomEditRow {
+            part_id: Uuid::nil(),
+            partno: String::new(),
+            description: String::new(),
+            quantity: 1,
+            tags: String::new(),
+            disabled: false,
+        }
+    }
+
+    fn confirm_row_deletion_by_ui(&mut self, _row: &BomEditRow) -> bool {
+        true
+    }
+
+    fn hotkeys(&mut self, context: &UiActionContext) -> Vec<(KeyboardShortcut, UiAction)> {
+        let none = Modifiers::NONE;
+        let ctrl = Modifiers::CTRL;
+        let shift = Modifiers::SHIFT;
+        type MD = MoveDirection;
+
+        if context.cursor.is_editing() {
+            // Editing: Enter=confirm, Esc=cancel, arrows/Tab=confirm and move to adjacent cell
+            return vec![
+                (KeyboardShortcut::new(none, Key::Enter), UiAction::CommitEdition),
+                (KeyboardShortcut::new(none, Key::Escape), UiAction::CancelEdition),
+                (KeyboardShortcut::new(none, Key::ArrowUp), UiAction::CommitEditionAndMove(MD::Up)),
+                (KeyboardShortcut::new(none, Key::ArrowDown), UiAction::CommitEditionAndMove(MD::Down)),
+                (KeyboardShortcut::new(none, Key::ArrowLeft), UiAction::CommitEditionAndMove(MD::Left)),
+                (KeyboardShortcut::new(none, Key::ArrowRight), UiAction::CommitEditionAndMove(MD::Right)),
+                (KeyboardShortcut::new(none, Key::Tab), UiAction::CommitEditionAndMove(MD::Right)),
+                (KeyboardShortcut::new(shift, Key::Tab), UiAction::CommitEditionAndMove(MD::Left)),
+            ];
+        }
+
+        vec![
+            (KeyboardShortcut::new(none, Key::Enter), UiAction::SelectionStartEditing),
+            (KeyboardShortcut::new(ctrl, Key::C), UiAction::CopySelection),
+            (KeyboardShortcut::new(ctrl, Key::X), UiAction::CutSelection),
+            (KeyboardShortcut::new(ctrl, Key::V), UiAction::PasteInsert),
+            (KeyboardShortcut::new(ctrl, Key::Z), UiAction::Undo),
+            (KeyboardShortcut::new(ctrl, Key::Y), UiAction::Redo),
+            (KeyboardShortcut::new(ctrl, Key::D), UiAction::DuplicateRow),
+            (KeyboardShortcut::new(none, Key::Delete), UiAction::DeleteSelection),
+            (KeyboardShortcut::new(ctrl, Key::Delete), UiAction::DeleteRow),
+            (KeyboardShortcut::new(none, Key::ArrowUp), UiAction::MoveSelection(MD::Up)),
+            (KeyboardShortcut::new(none, Key::ArrowDown), UiAction::MoveSelection(MD::Down)),
+            (KeyboardShortcut::new(none, Key::ArrowLeft), UiAction::MoveSelection(MD::Left)),
+            (KeyboardShortcut::new(none, Key::ArrowRight), UiAction::MoveSelection(MD::Right)),
+            (KeyboardShortcut::new(ctrl, Key::A), UiAction::SelectAll),
+            (KeyboardShortcut::new(none, Key::PageUp), UiAction::NavPageUp),
+            (KeyboardShortcut::new(none, Key::PageDown), UiAction::NavPageDown),
+            (KeyboardShortcut::new(none, Key::Home), UiAction::NavTop),
+            (KeyboardShortcut::new(none, Key::End), UiAction::NavBottom),
+        ]
+    }
+
+    fn trivial_config(&mut self) -> egui_data_table::viewer::TrivialConfig {
+        egui_data_table::viewer::TrivialConfig {
+            table_row_height: Some(22.0),
+            max_undo_history: 50,
+            max_scroll_height: None,
+        }
+    }
+
+    /// Allow all edit actions (Cut, Copy, Paste, Delete, Duplicate, etc.)
+    fn allowed_context_menu_actions(&self) -> Option<HashSet<UiAction>> {
+        None
+    }
+
+    fn get_system_clipboard_for_paste(&mut self) -> Option<String> {
+        self.system_clipboard.clone()
+    }
+}
+
+pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
+    let avail = ui.available_rect_before_wrap();
+    let width = avail.width().min(CENTERED_MAX_WIDTH);
+    let left = avail.left() + (avail.width() - width) / 2.0;
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(left, avail.top()),
+        egui::vec2(width, avail.height()),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.heading("BOM Editor");
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                ui.label("Select BOM to edit:");
+                let boms: Vec<_> = app.boms.iter().collect();
+                let selected_partno = app
+                    .selected_bom_for_edit
+                    .and_then(|id| app.boms.iter().find(|b| b.id == id).map(|b| b.partno.clone()))
+                    .unwrap_or_default();
+                egui::ComboBox::from_id_salt("bom_select")
+                    .selected_text(if selected_partno.is_empty() {
+                        "Select...".to_string()
+                    } else {
+                        selected_partno.clone()
+                    })
+                    .show_ui(ui, |ui| {
+                        for bom in &boms {
+                            let text = format!("{} - {}", bom.partno, bom.description);
+                            let is_selected = app.selected_bom_for_edit == Some(bom.id);
+                            if ui.selectable_label(is_selected, &text).clicked() {
+                                app.selected_bom_for_edit = Some(bom.id);
                             }
                         }
+                    });
+            });
+
+            if let Some(bom_id) = app.selected_bom_for_edit {
+                // Reset viewing revision when switching to a different BOM
+                if app.bom_edit_last_sync_key.map(|(id, _, _)| id) != Some(bom_id) {
+                    app.bom_edit_viewing_revision = None;
+                }
+                let bom = match app.boms.iter().find(|b| b.id == bom_id) {
+                    Some(b) => b.clone(),
+                    None => return,
+                };
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label("Assembly:");
+                    ui.label(&bom.partno);
+                    ui.label("-");
+                    ui.label(&bom.description);
+                });
+                ui.add_space(4.0);
+
+                // Revision dropdown
+                let revisions: Vec<u32> = app
+                    .bom_revisions
+                    .get(&bom_id)
+                    .map(|revs| revs.iter().map(|r| r.revision).collect())
+                    .unwrap_or_default();
+                let viewing = app.bom_edit_viewing_revision;
+                ui.horizontal(|ui| {
+                    ui.label("Revision:");
+                    let current_label = "Current (editable)";
+                    let selected_text = match viewing {
+                        None => current_label.to_string(),
+                        Some(r) => format!("Revision {}", r),
+                    };
+                    egui::ComboBox::from_id_salt("bom_revision_select")
+                        .selected_text(selected_text)
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(viewing.is_none(), current_label).clicked() {
+                                app.bom_edit_viewing_revision = None;
+                            }
+                            for &rev in &revisions {
+                                let is_selected = viewing == Some(rev);
+                                if ui.selectable_label(is_selected, format!("Revision {}", rev)).clicked() {
+                                    app.bom_edit_viewing_revision = Some(rev);
+                                }
+                            }
+                        });
+                });
+                ui.add_space(4.0);
+
+                let entries = bom_entries_for_edit(app, bom_id);
+                let sync_key = bom_edit_sync_key(bom_id, entries.len(), app.bom_edit_viewing_revision);
+                if app.bom_edit_last_sync_key != Some(sync_key) {
+                    let rows = bom_edit_rows_for_table(app, &entries);
+                    app.bom_edit_table.replace(rows);
+                    app.bom_edit_last_sync_key = Some(sync_key);
+                }
+
+                let is_viewing_revision = app.bom_edit_viewing_revision.is_some();
+                if is_viewing_revision {
+                    ui.colored_label(egui::Color32::GRAY, "Viewing old revision (read-only)");
+                }
+                ui.strong("Components");
+                ui.add_space(4.0);
+
+                let table_area_height = ui.available_rect_before_wrap().height();
+
+                let boms = app.boms.clone();
+                let existing_part_ids: HashSet<Uuid> = app
+                    .bom_edit_table
+                    .iter()
+                    .filter(|r| r.part_id != Uuid::nil())
+                    .map(|r| r.part_id)
+                    .collect();
+                #[cfg(not(target_arch = "wasm32"))]
+                let system_clipboard = arboard::Clipboard::new()
+                    .ok()
+                    .and_then(|mut c| c.get_text().ok())
+                    .filter(|s| !s.trim().is_empty());
+                #[cfg(target_arch = "wasm32")]
+                let system_clipboard: Option<String> = None;
+                let mut viewer = BomEditViewer {
+                    boms,
+                    existing_part_ids,
+                    system_clipboard,
+                };
+                ui.add(
+                    Renderer::new(&mut app.bom_edit_table, &mut viewer)
+                        .with_table_row_height(22.0)
+                        .with_max_scroll_height(table_area_height.max(100.0)),
+                );
+
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let add_enabled = !is_viewing_revision;
+                    if ui.add_enabled(add_enabled, egui::Button::new("Add Component")).clicked() {
+                        app.bom_edit_table.extend(std::iter::once(BomEditRow {
+                            part_id: Uuid::nil(),
+                            partno: String::new(),
+                            description: String::new(),
+                            quantity: 1,
+                            tags: String::new(),
+                            disabled: false,
+                        }));
+                    }
+                    if ui.add_enabled(!is_viewing_revision, egui::Button::new("Save")).clicked() {
+                        let rows: Vec<BomEditRow> = app.bom_edit_table.iter().cloned().collect();
+                        sync_table_to_bom_entries(app, bom_id, &rows);
+                        // Create revision snapshot and increment
+                        let rev = *app.bom_revision_next.entry(bom_id).or_insert(1);
+                        let entries: Vec<BomEntry> = app
+                            .bom_entries
+                            .iter()
+                            .filter(|e| e.bom_id == bom_id)
+                            .cloned()
+                            .collect();
+                        app.bom_revisions
+                            .entry(bom_id)
+                            .or_default()
+                            .insert(0, BomRevision { revision: rev, entries });
+                        *app.bom_revision_next.get_mut(&bom_id).unwrap() = rev + 1;
+                        app.bom_edit_viewing_revision = None; // Stay on current after save
                     }
                 });
-            if let Some((bid, pid)) = to_remove {
-                app.bom_entries.retain(|e| !(e.bom_id == bid && e.part_id == pid));
             }
-
-            ui.add_space(8.0);
-            if ui.button("Add Component").clicked() {
-                app.bom_edit_search_modal = true;
-            }
-        }
-        });
     });
-
-    if app.bom_edit_search_modal {
-        let mut selected = None;
-        egui::Window::new("Add Component to BOM")
-            .collapsible(false)
-            .resizable(true)
-            .show(ctx, |ui| {
-                bom_search_ui(ui, &mut app.bom_edit_search_query, &app.boms, &mut selected);
-                if let Some(part_id) = selected {
-                    if let Some(bom_id) = app.selected_bom_for_edit {
-                        if !app.bom_entries.iter().any(|e| e.bom_id == bom_id && e.part_id == part_id) {
-                            app.bom_entries.push(crate::models::BomEntry {
-                                bom_id,
-                                part_id,
-                                quantity: 1,
-                                disabled: false,
-                                tags: Vec::new(),
-                            });
-                        }
-                        app.bom_edit_search_modal = false;
-                    }
-                }
-            });
-    }
 }

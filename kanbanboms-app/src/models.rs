@@ -9,6 +9,9 @@ pub struct Bom {
     pub description: String,
     pub batch_quantity: i32,
     pub location: String,
+    /// Arbitrary key-value fields associated with the part.
+    #[serde(default)]
+    pub custom_fields: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -19,6 +22,13 @@ pub struct BomEntry {
     pub disabled: bool,
     #[serde(default)]
     pub tags: Vec<String>,
+}
+
+/// Snapshot of BOM entries at a save point.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BomRevision {
+    pub revision: u32,
+    pub entries: Vec<BomEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,6 +52,19 @@ static RE_5_2_3: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"(?i)\W*([0-9]{5})\s*-\s*([a-zA-Z]{2})\s*-\s*([0-9]{3})\s*").unwrap());
 static RE_EL: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"(?i)\W*EL\s*-\s*([0-9]{4})\s*").unwrap());
+
+/// Part categories used in Part Master (worksheet-style tabs).
+pub const PART_CATEGORIES: &[&str] = &["EA", "ME", "SD", "TR", "Others"];
+
+/// Category from part number suffix: 12345-XX-123 -> XX. Returns the actual 2-letter code (e.g. GH, EA).
+/// Parts that don't match the format (e.g. EL-1234) return "Others".
+pub fn part_category(partno: &str) -> String {
+    let upper = partno.to_uppercase();
+    if let Some(caps) = RE_5_2_3.captures(&upper) {
+        return caps[2].to_string();
+    }
+    "Others".to_string()
+}
 
 /// Normalize part number per Django utils: 12345-XX-123 or EL-1234 format
 pub fn normalize_partno(partno: &str) -> String {

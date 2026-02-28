@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-egui = "0.29"
-eframe = { version = "0.29", default-features = false, features = [
+egui = "0.33"
+eframe = { version = "0.33", default-features = false, features = [
     "default_fonts",
     "glow",
     "persistence",
@@ -16,18 +16,23 @@ log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde", "js"] }
-genpdf = "0.2"
-chrono = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["alloc", "std", "wasmbind", "clock"] }
 csv = "1.3"
 regex = "1.10"
 once_cell = "1.19"
+rand = "0.8"
+egui-data-table = { path = "../egui-data-table" }
+egui_dock = "0.18"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger = "0.11"
+genpdf = "0.2"
+arboard = "3"
 
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["Window", "Document", "HtmlCanvasElement", "Element", "Blob", "Url", "UrlSearchParams", "FileReader", "File", "FileList", "HtmlInputElement"] }

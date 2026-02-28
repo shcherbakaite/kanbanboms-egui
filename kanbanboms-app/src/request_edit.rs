@@ -5,13 +5,12 @@ use egui;
 
 const CENTERED_MAX_WIDTH: f32 = 700.0;
 
-pub fn request_edit_ui(app: &mut KanbanBomsApp, ctx: &egui::Context) {
-    egui::CentralPanel::default().show(ctx, |ui| {
-        let avail = ui.available_rect_before_wrap();
-        let width = avail.width().min(CENTERED_MAX_WIDTH);
-        let left = avail.left() + (avail.width() - width) / 2.0;
-        let rect = egui::Rect::from_min_size(egui::pos2(left, avail.top()), egui::vec2(width, avail.height()));
-        ui.allocate_new_ui(egui::UiBuilder::default().max_rect(rect), |ui| {
+pub fn request_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
+    let avail = ui.available_rect_before_wrap();
+    let width = avail.width().min(CENTERED_MAX_WIDTH);
+    let left = avail.left() + (avail.width() - width) / 2.0;
+    let rect = egui::Rect::from_min_size(egui::pos2(left, avail.top()), egui::vec2(width, avail.height()));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
         ui.heading("Kanban BOMs - Request");
         ui.add_space(8.0);
 
@@ -33,8 +32,10 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ctx: &egui::Context) {
         if entries.is_empty() {
             ui.label("Scan kanban card or enter part numbers manually");
         } else {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                egui::Grid::new("request_assembly_grid")
+            egui::ScrollArea::vertical()
+                .id_salt(("request_assembly_scroll", request_id))
+                .show(ui, |ui| {
+                egui::Grid::new(("request_assembly_grid", request_id))
                     .num_columns(3)
                     .spacing([12.0, 4.0])
                     .show(ui, |ui| {
@@ -63,9 +64,10 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ctx: &egui::Context) {
             if ui.button("Clear List").clicked() {
                 app.clear_request();
             }
-            if ui.button("Preview").clicked() {
-                app.current_screen = crate::app::Screen::BomPreview;
+            if ui.button("Print Preview").clicked() {
+                app.trigger_print_preview();
             }
+            #[cfg(not(target_arch = "wasm32"))]
             if ui.button("Export PDF").clicked() {
                 app.trigger_pdf_download();
             }
@@ -113,8 +115,11 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ctx: &egui::Context) {
                 ui.label("No matching BOMs");
             } else {
                 let mut clicked_id = None;
-                egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
-                    egui::Grid::new("search_results_grid")
+                egui::ScrollArea::vertical()
+                    .id_salt(("search_results_scroll", request_id))
+                    .max_height(150.0)
+                    .show(ui, |ui| {
+                    egui::Grid::new(("search_results_grid", request_id))
                         .num_columns(3)
                         .spacing([12.0, 4.0])
                         .show(ui, |ui| {
@@ -140,6 +145,5 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ctx: &egui::Context) {
                 }
             }
         }
-        });
     });
 }
