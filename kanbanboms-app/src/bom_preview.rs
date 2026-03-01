@@ -202,6 +202,10 @@ impl RowViewer<BomPreviewRow> for BomPreviewViewer {
         }
     }
 
+    fn persist_ui_state(&self) -> bool {
+        true
+    }
+
     fn allowed_context_menu_actions(&self) -> Option<HashSet<UiAction>> {
         Some([UiAction::CopySelection].into_iter().collect())
     }
@@ -374,7 +378,7 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                     tags: tags.join(" "),
                 })
                 .collect();
-            app.bom_preview_table.replace(rows);
+            app.bom_preview_table.replace_keeping_ui(rows);
             app.bom_preview_last_sync_key = Some(sync_key);
         }
 
