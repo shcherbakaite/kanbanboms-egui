@@ -2,7 +2,7 @@ use crate::bom_edit::BomEditRow;
 use crate::bom_preview::BomPreviewRow;
 use crate::part_master::{PartMasterRow, UsageReportRow};
 use crate::dock::{show_dock_ui, DockTab, PartEditState, RequestTabState};
-use crate::models::{get_aggregated_parts, recompute_bom_entry_counts, AggregatedPart, Bom, BomEntry, BomRevision, Request, RequestEntry};
+use crate::models::{get_aggregated_parts, migrate_location_to_custom_fields, recompute_bom_entry_counts, AggregatedPart, Bom, BomEntry, BomRevision, Request, RequestEntry};
 use crate::html_export::generate_html_print_preview;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::pdf_export::generate_pdf;
@@ -83,9 +83,10 @@ static HELPFUL_ADVICE: &[&str] = &[
 pub struct KanbanBomsApp {
     pub boms: Vec<Bom>,
     pub bom_entries: Vec<BomEntry>,
-    pub requests: Vec<Request>,
+    #[serde(default)]
+    pub request: Request,
+    #[serde(default)]
     pub request_entries: Vec<RequestEntry>,
-    pub current_request_id: Option<Uuid>,
     #[serde(skip)]
     pub bom_edit_search_modal: bool,
     #[serde(skip)]
@@ -110,24 +111,24 @@ pub struct KanbanBomsApp {
     /// In-progress tags edit: (bom_id, part_id) -> current text (allows spaces while typing)
     #[serde(skip)]
     pub bom_edit_tags_buffer: HashMap<(Uuid, Uuid), String>,
-    /// BOM Preview: which columns to include in HTML print (Part Number, Description, Location, UOM, Qty, Tags). PDF ignores this.
-    #[serde(skip, default = "default_bom_preview_columns_in_html")]
-    pub bom_preview_columns_in_html: [bool; 6],
+    /// BOM Preview: which columns to include in HTML print. Keys: "Part Number", "Description", "UOM", "Qty", "Tags", plus meta field names (Location, MPN, Lead time, etc.).
+    #[serde(skip, default)]
+    pub bom_preview_columns_in_html: std::collections::HashMap<String, bool>,
     /// BOM Preview: data table (egui-data-table)
     #[serde(skip)]
     pub bom_preview_table: egui_data_table::DataTable<BomPreviewRow>,
-    /// BOM Preview: last sync key (data_version, request_id, parts_len, filtered_len, total_qty) to avoid replacing rows every frame
+    /// BOM Preview: last sync key (data_version, parts_len, filtered_len, total_qty, meta_sig) to avoid replacing rows every frame
     #[serde(skip)]
-    pub bom_preview_last_sync_key: Option<(u64, Uuid, usize, usize, i32)>,
+    pub bom_preview_last_sync_key: Option<(u64, usize, usize, i32, String)>,
     /// Cached (bom_entries, aggregated parts) for BOM preview; only valid when Preview tab is active. Cleared when switching to Edit.
     #[serde(skip)]
-    pub bom_preview_parts_cache: Option<(u64, Uuid, Vec<BomEntry>, Vec<AggregatedPart>)>,
+    pub bom_preview_parts_cache: Option<(u64, Vec<BomEntry>, Vec<AggregatedPart>)>,
     /// When switching to Preview with cache miss: defer heavy BOM build to next frame so the mode switch paints immediately.
     #[serde(skip)]
-    pub bom_preview_deferred_build: Option<Uuid>,
+    pub bom_preview_deferred_build: Option<()>,
     /// Request Edit: cached (partno, description) per assembly; invalid when assemblies or boms change. Avoids boms_by_id_ref() every frame when editing quantity.
     #[serde(skip)]
-    pub request_edit_display_cache: Option<(Uuid, u64, Vec<Uuid>, Vec<(Uuid, String, String)>)>,
+    pub request_edit_display_cache: Option<(u64, Vec<Uuid>, Vec<(Uuid, String, String)>)>,
     /// Part Master: selected worksheet tab index
     #[serde(skip)]
     pub part_master_tab: usize,
@@ -196,9 +197,9 @@ pub struct KanbanBomsApp {
     /// Dock layout state (egui_dock).
     #[serde(skip)]
     pub dock_state: Option<egui_dock::DockState<DockTab>>,
-    /// Per-request tab state (Edit/Preview mode).
+    /// Request tab state (Edit/Preview mode).
     #[serde(skip)]
-    pub request_states: std::collections::HashMap<Uuid, RequestTabState>,
+    pub request_tab_state: RequestTabState,
     /// PocketBase API base URL (e.g. http://localhost:8090/api). Empty = local storage only.
     #[serde(default)]
     pub api_base_url: String,
@@ -247,10 +248,6 @@ pub struct KanbanBomsApp {
     pub mascot_advice_index: Option<usize>,
 }
 
-fn default_bom_preview_columns_in_html() -> [bool; 6] {
-    [true; 6]
-}
-
 fn default_visible_categories() -> Vec<String> {
     let mut cats = vec!["All".to_string()];
     cats.extend(crate::models::PART_CATEGORIES.iter().map(|s| s.to_string()));
@@ -262,9 +259,13 @@ impl Default for KanbanBomsApp {
         let mut app = Self {
             boms: Vec::new(),
             bom_entries: Vec::new(),
-            requests: Vec::new(),
+            request: Request {
+                id: Uuid::new_v4(),
+                requested_by: String::new(),
+                machine_number: String::new(),
+                notes: String::new(),
+            },
             request_entries: Vec::new(),
-            current_request_id: None,
             bom_edit_search_modal: false,
             bom_edit_search_query: String::new(),
             selected_bom_for_edit: None,
@@ -276,7 +277,7 @@ impl Default for KanbanBomsApp {
             partno_add_error: None,
             preview_tag_visible: HashMap::new(),
             bom_edit_tags_buffer: HashMap::new(),
-            bom_preview_columns_in_html: [true; 6],
+            bom_preview_columns_in_html: std::collections::HashMap::new(),
             bom_preview_table: egui_data_table::DataTable::new(),
             bom_preview_last_sync_key: None,
             bom_preview_parts_cache: None,
@@ -305,7 +306,7 @@ impl Default for KanbanBomsApp {
             usage_report_table: egui_data_table::DataTable::new(),
             usage_report_last_sync_key: None,
             dock_state: None,
-            request_states: std::collections::HashMap::new(),
+            request_tab_state: RequestTabState::default(),
             api_base_url: String::new(),
             backend_modal_open: false,
             backend_error: None,
@@ -336,6 +337,7 @@ impl KanbanBomsApp {
         } else {
             Default::default()
         };
+        migrate_location_to_custom_fields(&mut app.boms);
         app.ensure_request();
         // If PocketBase URL configured, always load from backend on start
         #[cfg(not(target_arch = "wasm32"))]
@@ -397,6 +399,7 @@ impl KanbanBomsApp {
 
     fn apply_loaded_data(&mut self, data: StoredData) {
         self.boms = data.boms;
+        migrate_location_to_custom_fields(&mut self.boms);
         self.bom_entries = data.bom_entries;
         recompute_bom_entry_counts(&mut self.boms, &self.bom_entries);
         // requests/request_entries are local state only, not stored in database
@@ -505,17 +508,7 @@ impl KanbanBomsApp {
 
 impl KanbanBomsApp {
     fn ensure_request(&mut self) {
-        if self.current_request_id.is_none() || !self.requests.iter().any(|r| r.id == self.current_request_id.unwrap()) {
-            let req = Request {
-                id: Uuid::new_v4(),
-                requested_by: String::new(),
-                machine_number: String::new(),
-                notes: String::new(),
-            };
-            self.current_request_id = Some(req.id);
-            self.requests.push(req);
-            self.mark_request_dirty();
-        }
+        // Single request is always present (created in Default). No-op.
     }
 
     pub(crate) fn boms_by_id(&self) -> HashMap<Uuid, Bom> {
@@ -530,14 +523,9 @@ impl KanbanBomsApp {
     /// BOM entries for request aggregation: uses latest revision when available, else bom_entries.
     /// Recursively includes entries for sub-assemblies when expand=true, so get_aggregated_parts
     /// can flatten expanded BOMs in the preview.
-    pub(crate) fn effective_bom_entries_for_request(&self, request_id: Uuid) -> Vec<BomEntry> {
+    pub(crate) fn effective_bom_entries_for_request(&self) -> Vec<BomEntry> {
         let mut result = Vec::new();
-        let mut to_process: Vec<Uuid> = self
-            .request_entries
-            .iter()
-            .filter(|e| e.request_id == request_id)
-            .map(|e| e.part_id)
-            .collect();
+        let mut to_process: Vec<Uuid> = self.request_entries.iter().map(|e| e.part_id).collect();
         let mut processed = std::collections::HashSet::new();
         let is_assembly = |part_id: Uuid| {
             self.bom_entries.iter().any(|e| e.bom_id == part_id)
@@ -578,19 +566,14 @@ impl KanbanBomsApp {
     }
 
     pub fn add_assembly_to_request(&mut self, bom_id: Uuid) {
-        let request_id = match self.current_request_id {
-            Some(id) => id,
-            None => return,
-        };
         let bom = match self.boms.iter().find(|b| b.id == bom_id) {
             Some(b) => b.clone(),
             None => return,
         };
-        if let Some(re) = self.request_entries.iter_mut().find(|e| e.request_id == request_id && e.part_id == bom_id) {
+        if let Some(re) = self.request_entries.iter_mut().find(|e| e.part_id == bom_id) {
             re.quantity += bom.batch_quantity.max(1);
         } else {
             self.request_entries.push(RequestEntry {
-                request_id,
                 part_id: bom_id,
                 quantity: bom.batch_quantity.max(1),
             });
@@ -599,25 +582,15 @@ impl KanbanBomsApp {
     }
 
     pub fn clear_request(&mut self) {
-        if let Some(rid) = self.current_request_id {
-            self.request_entries.retain(|e| e.request_id != rid);
-            self.mark_request_dirty();
-        }
+        self.request_entries.clear();
+        self.request_edit_display_cache = None;
+        self.mark_request_dirty();
     }
 
     pub fn export_csv(&self) -> String {
-        let request_id = match self.current_request_id {
-            Some(id) => id,
-            None => return String::new(),
-        };
         let boms_map = self.boms_by_id();
-        let bom_entries = self.effective_bom_entries_for_request(request_id);
-        let parts = get_aggregated_parts(
-            request_id,
-            &boms_map,
-            &bom_entries,
-            &self.request_entries,
-        );
+        let bom_entries = self.effective_bom_entries_for_request();
+        let parts = get_aggregated_parts(&boms_map, &bom_entries, &self.request_entries);
         let mut w = Vec::new();
         {
             let mut writer = csv::Writer::from_writer(&mut w);
@@ -633,28 +606,9 @@ impl KanbanBomsApp {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn trigger_pdf_download(&self) {
-        let request_id = match self.current_request_id {
-            Some(id) => id,
-            None => return,
-        };
-        let request = match self.requests.iter().find(|r| r.id == request_id) {
-            Some(r) => r.clone(),
-            None => return,
-        };
-        let assemblies: Vec<RequestEntry> = self
-            .request_entries
-            .iter()
-            .filter(|e| e.request_id == request_id)
-            .cloned()
-            .collect();
         let boms_map = self.boms_by_id();
-        let bom_entries = self.effective_bom_entries_for_request(request_id);
-        let mut parts = get_aggregated_parts(
-            request_id,
-            &boms_map,
-            &bom_entries,
-            &self.request_entries,
-        );
+        let bom_entries = self.effective_bom_entries_for_request();
+        let mut parts = get_aggregated_parts(&boms_map, &bom_entries, &self.request_entries);
         // Filter by tag visibility (same as preview)
         parts.retain(|(_, _, _, _, _, tags)| {
             tags.is_empty()
@@ -662,9 +616,15 @@ impl KanbanBomsApp {
                     .iter()
                     .any(|t| self.preview_tag_visible.get(t).copied().unwrap_or(true))
         });
-        let sort_state = self.bom_preview_table.sort_state();
+        let meta_field_names = crate::bom_preview::meta_field_names_from_parts(&parts);
+        let column_names = crate::bom_preview::bom_preview_column_names(&meta_field_names);
+        let sort_state_idx = self.bom_preview_table.sort_state();
+        let sort_state: Vec<(String, bool)> = sort_state_idx
+            .iter()
+            .filter_map(|(idx, asc)| column_names.get(*idx).map(|n| (n.clone(), *asc)))
+            .collect();
         crate::html_export::sort_parts_by_state(&mut parts, &sort_state);
-        match generate_pdf(&request, &assemblies, &boms_map, &parts) {
+        match generate_pdf(&self.request, &self.request_entries, &boms_map, &parts, &column_names) {
             Ok(bytes) => {
                 if let Err(e) = std::fs::write("kitting_bom.pdf", &bytes) {
                     log::error!("Failed to write PDF: {}", e);
@@ -675,28 +635,9 @@ impl KanbanBomsApp {
     }
 
     pub fn trigger_print_preview(&mut self) {
-        let request_id = match self.current_request_id {
-            Some(id) => id,
-            None => return,
-        };
-        let request = match self.requests.iter().find(|r| r.id == request_id) {
-            Some(r) => r.clone(),
-            None => return,
-        };
-        let assemblies: Vec<RequestEntry> = self
-            .request_entries
-            .iter()
-            .filter(|e| e.request_id == request_id)
-            .cloned()
-            .collect();
         let boms_map = self.boms_by_id();
-        let bom_entries = self.effective_bom_entries_for_request(request_id);
-        let mut parts = get_aggregated_parts(
-            request_id,
-            &boms_map,
-            &bom_entries,
-            &self.request_entries,
-        );
+        let bom_entries = self.effective_bom_entries_for_request();
+        let mut parts = get_aggregated_parts(&boms_map, &bom_entries, &self.request_entries);
         // Filter by tag visibility (same as preview)
         parts.retain(|(_, _, _, _, _, tags)| {
             tags.is_empty()
@@ -704,17 +645,31 @@ impl KanbanBomsApp {
                     .iter()
                     .any(|t| self.preview_tag_visible.get(t).copied().unwrap_or(true))
         });
-        // Apply preview data grid sort order
-        let sort_state = self.bom_preview_table.sort_state();
+        // Build column names and sort/display order from preview table
+        let meta_field_names = crate::bom_preview::meta_field_names_from_parts(&parts);
+        let column_names = crate::bom_preview::bom_preview_column_names(&meta_field_names);
+        let sort_state_idx = self.bom_preview_table.sort_state();
+        let sort_state: Vec<(String, bool)> = sort_state_idx
+            .iter()
+            .filter_map(|(idx, asc)| column_names.get(*idx).map(|n| (n.clone(), *asc)))
+            .collect();
         crate::html_export::sort_parts_by_state(&mut parts, &sort_state);
         let column_order = self.bom_preview_table.column_order();
+        let order: Vec<usize> = column_order
+            .as_ref()
+            .filter(|o| o.len() == column_names.len())
+            .cloned()
+            .unwrap_or_else(|| (0..column_names.len()).collect());
+        let column_specs: Vec<(String, bool)> = order
+            .iter()
+            .filter_map(|&i| column_names.get(i).map(|n| (n.clone(), *self.bom_preview_columns_in_html.get(n).unwrap_or(&true))))
+            .collect();
         let html = generate_html_print_preview(
-            &request,
-            &assemblies,
+            &self.request,
+            &self.request_entries,
             &boms_map,
             &parts,
-            &self.bom_preview_columns_in_html,
-            column_order.as_deref(),
+            &column_specs,
         );
         if let Some(path) = crate::app::open_html_in_browser(&html) {
             #[cfg(not(target_arch = "wasm32"))]
@@ -765,6 +720,7 @@ impl KanbanBomsApp {
                 self.part_master_visible_categories.push(cat.clone());
             }
         }
+        migrate_location_to_custom_fields(&mut self.boms);
         recompute_bom_entry_counts(&mut self.boms, &self.bom_entries);
         self.mark_dirty();
     }
@@ -953,6 +909,8 @@ impl eframe::App for KanbanBomsApp {
                     ui.label("• PocketBase — optional backend");
                     ui.add_space(8.0);
                     ui.label("Rust • egui • MIT-style licenses");
+                    ui.add_space(8.0);
+                    ui.label("Assisted by Cursor AI — ~0.4 kWh, ~4.5 hours of cloud compute across 45+ sessions. You're welcome.");
                     ui.add_space(8.0);
                     if ui.button("Close").clicked() {
                         self.about_modal_open = false;

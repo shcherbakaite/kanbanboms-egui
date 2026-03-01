@@ -106,7 +106,7 @@ pub fn parse_csv_import(csv_text: &str) -> Result<StoredData, String> {
                     partno: asm_partno.clone(),
                     description: asm_desc,
                     batch_quantity: 1,
-                    location: String::new(),
+                    location: None,
                     custom_fields: HashMap::new(),
                     bom_entry_count: 0,
                 });
@@ -121,7 +121,7 @@ pub fn parse_csv_import(csv_text: &str) -> Result<StoredData, String> {
                     partno: comp_partno.clone(),
                     description: comp_desc,
                     batch_quantity: 0,
-                    location: String::new(),
+                    location: None,
                     custom_fields: HashMap::new(),
                     bom_entry_count: 0,
                 });

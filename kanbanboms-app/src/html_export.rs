@@ -5,23 +5,26 @@ use std::collections::HashMap;
 use std::cmp::Ordering;
 use uuid::Uuid;
 
-/// Part tuple: (partno, description, quantity, uom, location, tags)
-pub type PartTuple = (String, String, i32, String, String, Vec<String>);
+/// Part tuple: (partno, description, quantity, uom, custom_fields, tags)
+pub type PartTuple = (String, String, i32, String, HashMap<String, String>, Vec<String>);
 
 fn compare_part_by_column(
     a: &PartTuple,
     b: &PartTuple,
-    col: usize,
+    col_name: &str,
     asc: bool,
 ) -> Ordering {
-    let ord = match col {
-        0 => a.0.cmp(&b.0),
-        1 => a.1.cmp(&b.1),
-        2 => a.4.cmp(&b.4),   // location
-        3 => a.3.cmp(&b.3),   // uom
-        4 => a.2.cmp(&b.2),   // quantity
-        5 => a.5.join(" ").cmp(&b.5.join(" ")),
-        _ => Ordering::Equal,
+    let ord = match col_name {
+        "Part Number" => a.0.cmp(&b.0),
+        "Description" => a.1.cmp(&b.1),
+        "UOM" => a.3.cmp(&b.3),
+        "Qty" => a.2.cmp(&b.2),
+        "Tags" => a.5.join(" ").cmp(&b.5.join(" ")),
+        meta => {
+            let va = a.4.get(meta).map(|s| s.as_str()).unwrap_or("");
+            let vb = b.4.get(meta).map(|s| s.as_str()).unwrap_or("");
+            va.cmp(vb)
+        }
     };
     if asc {
         ord
@@ -30,10 +33,13 @@ fn compare_part_by_column(
     }
 }
 
-/// Sorts parts by the given sort state (column_index, ascending). Primary sort is last.
-pub fn sort_parts_by_state(parts: &mut [PartTuple], sort_state: &[(usize, bool)]) {
-    for (col, asc) in sort_state.iter().rev() {
-        parts.sort_by(|a, b| compare_part_by_column(a, b, *col, *asc));
+/// Sorts parts by the given sort state (column_name, ascending). Primary sort is last.
+pub fn sort_parts_by_state(
+    parts: &mut [PartTuple],
+    sort_state: &[(String, bool)],
+) {
+    for (col_name, asc) in sort_state.iter().rev() {
+        parts.sort_by(|a, b| compare_part_by_column(a, b, col_name, *asc));
     }
 }
 
@@ -52,21 +58,31 @@ fn escape_html(s: &str) -> String {
     out
 }
 
-/// Column indices for BOM table: 0=Part Number, 1=Description, 2=Location, 3=UOM, 4=Qty, 5=Tags.
-const BOM_COL_NAMES: &[&str] = &["Part Number", "Description", "Location", "UOM", "Qty", "Tags"];
+fn get_cell_value(part: &PartTuple, col_name: &str) -> String {
+    match col_name {
+        "Part Number" => part.0.clone(),
+        "Description" => part.1.clone(),
+        "UOM" => if part.3.is_empty() { "EA".to_string() } else { part.3.clone() },
+        "Qty" => part.2.to_string(),
+        "Tags" => part.5.join(" "),
+        meta => part.4.get(meta).cloned().unwrap_or_default(),
+    }
+}
+
+fn is_meta_field(col_name: &str) -> bool {
+    !matches!(col_name, "Part Number" | "Description" | "UOM" | "Qty" | "Tags")
+}
 
 /// Generates a self-contained HTML document for print preview.
 /// Mirrors the Django print_request template structure (without accumatica, IDs, barcodes).
 /// `parts` should be in the desired display order (e.g. matching preview data grid sort).
-/// `columns_in_html`: per-column flags; when true, that column is included in the output. PDF ignores this.
-/// `column_order`: display order of columns (indices 0..5); when None, uses default [0,1,2,3,4,5].
+/// `column_specs`: (column_name, include_in_html) in display order.
 pub fn generate_html_print_preview(
     request: &Request,
     assemblies: &[RequestEntry],
     boms: &HashMap<Uuid, Bom>,
     parts: &[PartTuple],
-    columns_in_html: &[bool; 6],
-    column_order: Option<&[usize]>,
+    column_specs: &[(String, bool)],
 ) -> String {
     let date = chrono::Local::now().format("%m/%d/%Y").to_string();
 
@@ -187,97 +203,90 @@ h2 { font-size: 1.15rem; }
 <colgroup>
 "#);
 
-    // Ordered list of columns to emit (respects preview column order)
-    let order: Vec<usize> = match column_order {
-        Some(o) if o.len() == 6 => o.to_vec(),
-        _ => (0..6).collect(),
+    // Columns to emit (in display order, only include when true)
+    let included: Vec<&(String, bool)> = column_specs
+        .iter()
+        .filter(|(_, inc)| *inc)
+        .collect();
+
+    let col_width = |name: &str| -> &'static str {
+        match name {
+            "Part Number" => "110px",
+            "Description" => "auto",
+            "UOM" => "40px",
+            "Qty" => "50px",
+            "Tags" => "80px",
+            _ => "100px", // meta fields
+        }
+    };
+    let center_col = |name: &str| -> bool {
+        matches!(name, "Part Number" | "UOM" | "Qty") || is_meta_field(name)
+    };
+    let is_text_col = |name: &str| -> bool {
+        matches!(name, "Part Number" | "Description" | "Tags") || is_meta_field(name)
     };
 
-    let col_widths = ["110px", "auto", "100px", "40px", "50px", "80px"];
-    let center_cols = [true, false, true, true, true, false]; // Part Number, Location, UOM, Qty centered
-    let text_class_cols = [true, true, true, false, false, true]; // Part Number, Description, Location, Tags use .text span
-
-    // Colgroup: only for included columns, in display order
-    for &i in &order {
-        if columns_in_html.get(i).copied().unwrap_or(false) {
-            let w = col_widths.get(i).copied().unwrap_or("auto");
-            html.push_str("<col style=\"width: ");
-            html.push_str(w);
-            html.push_str("\">\n");
-        }
+    for (name, _) in &included {
+        html.push_str("<col style=\"width: ");
+        html.push_str(col_width(name));
+        html.push_str("\">\n");
     }
 
     html.push_str("</colgroup>\n<thead>\n<tr>\n");
-    for &i in &order {
-        if columns_in_html.get(i).copied().unwrap_or(false) {
-            let cls = if center_cols.get(i).copied().unwrap_or(false) {
-                " class=\"pr-center\""
-            } else {
-                ""
-            };
-            html.push_str("<th");
-            html.push_str(cls);
-            html.push_str(">");
-            html.push_str(BOM_COL_NAMES.get(i).copied().unwrap_or(""));
-            html.push_str("</th>\n");
-        }
+    for (name, _) in &included {
+        let cls = if center_col(name) {
+            " class=\"pr-center\""
+        } else {
+            ""
+        };
+        html.push_str("<th");
+        html.push_str(cls);
+        html.push_str(">");
+        html.push_str(&escape_html(name));
+        html.push_str("</th>\n");
     }
     html.push_str("</tr>\n</thead>\n<tbody>\n");
 
-    for (partno, desc, qty, uom, loc, tags) in parts {
-        let loc_display = if loc.is_empty() { "N/A" } else { loc.as_str() };
-        let uom_display = if uom.is_empty() { "EA" } else { uom.as_str() };
-        let tags_display = tags.join(" ");
-        let partno_esc = escape_html(partno);
-        let desc_esc = escape_html(desc);
-        let loc_esc = escape_html(loc_display);
-        let uom_esc = escape_html(uom_display);
-        let tags_esc = escape_html(&tags_display);
-
-        let cell_values: [&str; 6] = [
-            &partno_esc,
-            &desc_esc,
-            &loc_esc,
-            &uom_esc,
-            &qty.to_string(),
-            &tags_esc,
-        ];
-
+    for part in parts {
         html.push_str("<tr>");
-        for &i in &order {
-            if columns_in_html.get(i).copied().unwrap_or(false) {
-                let val = cell_values.get(i).copied().unwrap_or("");
-                let use_text = text_class_cols.get(i).copied().unwrap_or(false);
-                let center = center_cols.get(i).copied().unwrap_or(false);
-                let mut cls = String::new();
-                if use_text {
-                    cls.push_str("text");
-                }
-                if center {
-                    if !cls.is_empty() {
-                        cls.push(' ');
-                    }
-                    cls.push_str("pr-center");
-                }
-                let cls_attr = if cls.is_empty() {
-                    String::new()
-                } else {
-                    format!(" class=\"{}\"", cls)
-                };
-                html.push_str("<td");
-                html.push_str(&cls_attr);
-                html.push_str(" title=\"");
-                html.push_str(val);
-                html.push_str("\">");
-                if use_text {
-                    html.push_str("<span>");
-                }
-                html.push_str(val);
-                if use_text {
-                    html.push_str("</span>");
-                }
-                html.push_str("</td>");
+        for (name, _) in &included {
+            let val = get_cell_value(part, name);
+            let display = if val.is_empty() && is_meta_field(name) {
+                "N/A".to_string()
+            } else {
+                val
+            };
+            let val_esc = escape_html(&display);
+            let use_text = is_text_col(name);
+            let center = center_col(name);
+            let mut cls = String::new();
+            if use_text {
+                cls.push_str("text");
             }
+            if center {
+                if !cls.is_empty() {
+                    cls.push(' ');
+                }
+                cls.push_str("pr-center");
+            }
+            let cls_attr = if cls.is_empty() {
+                String::new()
+            } else {
+                format!(" class=\"{}\"", cls)
+            };
+            html.push_str("<td");
+            html.push_str(&cls_attr);
+            html.push_str(" title=\"");
+            html.push_str(&val_esc);
+            html.push_str("\">");
+            if use_text {
+                html.push_str("<span>");
+            }
+            html.push_str(&val_esc);
+            if use_text {
+                html.push_str("</span>");
+            }
+            html.push_str("</td>");
         }
         html.push_str("</tr>\n");
     }

@@ -181,6 +181,8 @@ pub struct BomEditViewer {
     pub existing_part_ids: HashSet<Uuid>,
     /// System clipboard content for paste (e.g. from arboard)
     pub system_clipboard: Option<String>,
+    /// When user picks a custom action, set by the grid; consumed after draw.
+    pub pending_custom_action: Option<(usize, String)>,
 }
 
 impl BomEditViewer {
@@ -458,6 +460,22 @@ impl RowViewer<BomEditRow> for BomEditViewer {
     fn get_system_clipboard_for_paste(&mut self) -> Option<String> {
         self.system_clipboard.clone()
     }
+
+    fn custom_context_menu_items(&self, row: &BomEditRow) -> Vec<(Cow<'_, str>, String)> {
+        if row.part_id == Uuid::nil() {
+            return vec![];
+        }
+        let pid = row.part_id.to_string();
+        vec![
+            (Cow::Borrowed("Edit part"), format!("edit_part:{}", pid)),
+            (Cow::Borrowed("Edit BOM"), format!("edit_bom:{}", pid)),
+            (Cow::Borrowed("Usage report"), format!("usage_report:{}", pid)),
+        ]
+    }
+
+    fn custom_action_sink(&mut self) -> Option<&mut Option<(usize, String)>> {
+        Some(&mut self.pending_custom_action)
+    }
 }
 
 pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, bom_id: Uuid) {
@@ -597,12 +615,25 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, bom_id: Uuid) {
                     boms,
                     existing_part_ids,
                     system_clipboard,
+                    pending_custom_action: None,
                 };
                 ui.add(
                     Renderer::new(table, &mut viewer)
                         .with_table_row_height(22.0)
                         .with_max_scroll_height(table_area_height.max(100.0)),
                 );
+
+                if let Some((_row_idx, id)) = viewer.pending_custom_action.take() {
+                    let (action, uuid_str) = id.split_once(':').unwrap_or((id.as_str(), ""));
+                    if let Ok(pid) = Uuid::parse_str(uuid_str) {
+                        match action {
+                            "edit_part" => app.part_master_edit_part = Some(Some(pid)),
+                            "edit_bom" => app.pending_open_bom = Some(pid),
+                            "usage_report" => app.part_master_usage_report = Some(pid),
+                            _ => {}
+                        }
+                    }
+                }
 
                 ui.add_space(4.0);
                 let add_clicked = ui.horizontal(|ui| {

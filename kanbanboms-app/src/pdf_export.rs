@@ -19,11 +19,23 @@ fn load_font() -> fonts::FontFamily<fonts::FontData> {
     }
 }
 
+fn get_cell_value(part: &PartTuple, col_name: &str) -> String {
+    match col_name {
+        "Part Number" => part.0.clone(),
+        "Description" => part.1.clone(),
+        "UOM" => if part.3.is_empty() { "EA".to_string() } else { part.3.clone() },
+        "Qty" => part.2.to_string(),
+        "Tags" => part.5.join(" "),
+        meta => part.4.get(meta).cloned().unwrap_or_default(),
+    }
+}
+
 pub fn generate_pdf(
     request: &Request,
     assemblies: &[RequestEntry],
     boms: &HashMap<Uuid, Bom>,
     parts: &[PartTuple],
+    column_names: &[String],
 ) -> Result<Vec<u8>, String> {
     let font = load_font();
     let mut doc = Document::new(font);
@@ -69,29 +81,29 @@ pub fn generate_pdf(
     doc.push(Paragraph::new("Bill Of Materials").styled(style::Style::new().with_font_size(14)));
     doc.push(elements::Break::new(0.5));
 
-    let mut part_table = TableLayout::new(vec![1, 2, 1, 1, 1]);
+    let col_count = column_names.len().max(1);
+    let col_widths: Vec<usize> = (0..col_count).map(|_| 1).collect();
+    let mut part_table = TableLayout::new(col_widths);
     part_table.set_cell_decorator(FrameCellDecorator::new(true, true, false));
-    part_table
-        .row()
-        .element(Text::new("Part Number"))
-        .element(Text::new("Description"))
-        .element(Text::new("Location"))
-        .element(Text::new("UOM"))
-        .element(Text::new("Quantity"))
-        .push()
-        .map_err(|e| e.to_string())?;
-    for (partno, desc, qty, uom, loc, _tags) in parts {
-        let loc_display = if loc.is_empty() { "N/A" } else { loc.as_str() };
-        let uom_display = if uom.is_empty() { "EA" } else { uom.as_str() };
-        part_table
-            .row()
-            .element(Text::new(partno.clone()))
-            .element(Text::new(desc.clone()))
-            .element(Text::new(loc_display.to_string()))
-            .element(Text::new(uom_display.to_string()))
-            .element(Text::new(qty.to_string()))
-            .push()
-            .map_err(|e| e.to_string())?;
+    {
+        let mut row = part_table.row();
+        for name in column_names {
+            row = row.element(Text::new(name.clone()));
+        }
+        row.push().map_err(|e| e.to_string())?;
+    }
+    for part in parts {
+        let mut row = part_table.row();
+        for name in column_names {
+            let val = get_cell_value(part, name);
+            let display = if val.is_empty() && !matches!(name.as_str(), "Part Number" | "Description" | "UOM" | "Qty" | "Tags") {
+                "N/A".to_string()
+            } else {
+                val
+            };
+            row = row.element(Text::new(display));
+        }
+        row.push().map_err(|e| e.to_string())?;
     }
     doc.push(part_table);
 
@@ -115,7 +127,8 @@ mod tests {
         let assemblies = vec![];
         let boms = HashMap::new();
         let parts: Vec<PartTuple> = vec![];
-        let result = generate_pdf(&request, &assemblies, &boms, &parts);
+        let column_names = vec!["Part Number".to_string(), "Description".to_string(), "UOM".to_string(), "Qty".to_string()];
+        let result = generate_pdf(&request, &assemblies, &boms, &parts, &column_names);
         assert!(result.is_ok(), "PDF generation failed: {:?}", result.err());
         let bytes = result.unwrap();
         assert!(!bytes.is_empty());

@@ -28,8 +28,8 @@ pub enum DockTab {
     PartMaster,
     /// BOM Editor for a specific part (bom_id).
     BomEdit(Uuid),
-    /// Request editor/preview for a specific request.
-    Request(Uuid),
+    /// Request editor/preview (single request).
+    Request,
     /// Part edit/create. Uuid = tab id (part id for existing, generated for new).
     PartEdit(Uuid),
     /// Usage report: lists all BOMs where a part (part_id) is used.
@@ -83,7 +83,7 @@ impl DockTab {
                     .map(|t| t.is_dirty())
                     .unwrap_or(false)
             }
-            DockTab::Request(_) | DockTab::UsageReport(_) => false,
+            DockTab::Request | DockTab::UsageReport(_) => false,
         }
     }
 
@@ -108,19 +108,14 @@ impl DockTab {
                 .find(|b| b.id == *bom_id)
                 .map(|b| format!("BOM: {}", b.partno))
                 .unwrap_or_else(|| "BOM Editor".to_string()),
-            DockTab::Request(req_id) => app
-                .requests
-                .iter()
-                .find(|r| r.id == *req_id)
-                .map(|r| {
-                    let machine = if r.machine_number.is_empty() {
-                        "Request"
-                    } else {
-                        &r.machine_number
-                    };
-                    format!("{}", machine)
-                })
-                .unwrap_or_else(|| "Request".to_string()),
+            DockTab::Request => {
+                let machine = if app.request.machine_number.is_empty() {
+                    "Request"
+                } else {
+                    &app.request.machine_number
+                };
+                format!("{}", machine)
+            }
             DockTab::UsageReport(part_id) => app
                 .boms
                 .iter()
@@ -165,15 +160,8 @@ impl TabViewer for AppTabViewer<'_> {
             DockTab::BomEdit(bom_id) => {
                 bom_edit_ui(self.app, ui, *bom_id);
             }
-            DockTab::Request(req_id) => {
-                let prev_req = self.app.current_request_id;
-                self.app.current_request_id = Some(*req_id);
-
-                let state = self
-                    .app
-                    .request_states
-                    .entry(*req_id)
-                    .or_default();
+            DockTab::Request => {
+                let state = &mut self.app.request_tab_state;
 
                 // Align Edit/Preview buttons with the centered content below (same as request_edit/bom_preview)
                 let avail = ui.available_rect_before_wrap();
@@ -199,8 +187,6 @@ impl TabViewer for AppTabViewer<'_> {
                     self.app.bom_preview_deferred_build = None;
                     request_edit_ui(self.app, ui);
                 }
-
-                self.app.current_request_id = prev_req;
             }
             DockTab::UsageReport(part_id) => {
                 crate::part_master::usage_report_ui(self.app, ui, *part_id);
@@ -218,12 +204,9 @@ impl TabViewer for AppTabViewer<'_> {
     }
 }
 
-/// Build initial dock layout: Part Master and current request as tabs.
-pub fn make_initial_dock_state(app: &KanbanBomsApp) -> DockState<DockTab> {
-    let mut tabs = vec![DockTab::PartMaster];
-    if let Some(req_id) = app.current_request_id {
-        tabs.push(DockTab::Request(req_id));
-    }
+/// Build initial dock layout: Part Master and Request as tabs.
+pub fn make_initial_dock_state(_app: &KanbanBomsApp) -> DockState<DockTab> {
+    let tabs = vec![DockTab::PartMaster, DockTab::Request];
     DockState::new(tabs)
 }
 
@@ -266,17 +249,13 @@ pub fn ensure_dock_tabs(dock_state: &mut DockState<DockTab>, app: &mut KanbanBom
     }
 
     let has_part_master = surface.tabs().any(|t| matches!(t, DockTab::PartMaster));
-    let has_current_request = app.current_request_id.map_or(false, |rid| {
-        surface.tabs().any(|t| matches!(t, DockTab::Request(id) if *id == rid))
-    });
+    let has_request = surface.tabs().any(|t| matches!(t, DockTab::Request));
 
     if !has_part_master {
         surface.push_to_first_leaf(DockTab::PartMaster);
     }
-    if let Some(rid) = app.current_request_id {
-        if !has_current_request {
-            surface.push_to_first_leaf(DockTab::Request(rid));
-        }
+    if !has_request {
+        surface.push_to_first_leaf(DockTab::Request);
     }
 }
 

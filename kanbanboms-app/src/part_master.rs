@@ -521,7 +521,7 @@ pub fn part_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, tab_id: Uuid) {
                     partno: final_partno,
                     description,
                     batch_quantity: 0,
-                    location: String::new(),
+                    location: None,
                     custom_fields,
                     bom_entry_count: 0,
                 });
@@ -741,10 +741,12 @@ impl RowViewer<UsageReportRow> for UsageReportViewer {
     }
 
     fn custom_context_menu_items(&self, row: &UsageReportRow) -> Vec<(Cow<'_, str>, String)> {
-        vec![(
-            Cow::Borrowed("Edit BOM"),
-            format!("edit_bom:{}", row.bom_id),
-        )]
+        let pid = row.bom_id.to_string();
+        vec![
+            (Cow::Borrowed("Edit part"), format!("edit_part:{}", pid)),
+            (Cow::Borrowed("Edit BOM"), format!("edit_bom:{}", pid)),
+            (Cow::Borrowed("Usage report"), format!("usage_report:{}", pid)),
+        ]
     }
 
     fn custom_action_sink(&mut self) -> Option<&mut Option<(usize, String)>> {
@@ -826,19 +828,20 @@ pub fn usage_report_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, part_id: Uuid
     );
 
     if let Some((_row_idx, id)) = viewer.pending_custom_action.take() {
-        let (action, bom_id) = if let Some((a, u)) = id.split_once(':') {
-            (a, Uuid::parse_str(u).ok())
-        } else {
-            (id.as_str(), None)
-        };
-        let bom_id = bom_id.or_else(|| {
+        let (action, uuid_str) = id.split_once(':').unwrap_or((id.as_str(), ""));
+        let pid = Uuid::parse_str(uuid_str).ok().or_else(|| {
             app.usage_report_table
                 .iter()
                 .nth(_row_idx)
                 .map(|r| r.bom_id)
         });
-        if let (Some(bom_id), "edit_bom") = (bom_id, action) {
-            app.pending_open_bom = Some(bom_id);
+        if let Some(pid) = pid {
+            match action {
+                "edit_part" => app.part_master_edit_part = Some(Some(pid)),
+                "edit_bom" => app.pending_open_bom = Some(pid),
+                "usage_report" => app.part_master_usage_report = Some(pid),
+                _ => {}
+            }
         }
     }
 }

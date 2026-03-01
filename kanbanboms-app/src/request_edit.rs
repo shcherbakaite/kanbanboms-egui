@@ -15,31 +15,18 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
         ui.heading("Kanban BOMs - Request");
         ui.add_space(8.0);
 
-        let request_id = match app.current_request_id {
-            Some(id) => id,
-            None => {
-                ui.label("No request selected");
-                return;
-            }
-        };
-
-        let entries: Vec<_> = app
-            .request_entries
-            .iter()
-            .filter(|e| e.request_id == request_id)
-            .cloned()
-            .collect();
+        let entries: Vec<_> = app.request_entries.iter().cloned().collect();
 
         if entries.is_empty() {
             ui.label("Scan kanban card or enter part numbers manually");
         } else {
             let len_before = app.request_entries.len();
             let mut changed = false;
-            let mut to_remove: Vec<(Uuid, Uuid)> = Vec::new();
+            let mut to_remove: Vec<Uuid> = Vec::new();
             egui::ScrollArea::vertical()
-                .id_salt(("request_assembly_scroll", request_id))
+                .id_salt("request_assembly_scroll")
                 .show(ui, |ui| {
-                egui::Grid::new(("request_assembly_grid", request_id))
+                egui::Grid::new("request_assembly_grid")
                     .num_columns(6)
                     .spacing([12.0, 4.0])
                     .show(ui, |ui| {
@@ -51,15 +38,15 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                         ui.strong("");
                         ui.end_row();
 
-                        // Cache display by (request_id, boms_version, part_ids) - quantity changes don't affect partno/description
+                        // Cache display by (boms_version, part_ids) - quantity changes don't affect partno/description
                         let part_ids: Vec<Uuid> = entries.iter().map(|e| e.part_id).collect();
                         let cache_hit = app
                             .request_edit_display_cache
                             .as_ref()
-                            .map(|(rid, bv, pids, _)| (*rid, *bv, pids.as_slice()))
-                            == Some((request_id, app.boms_version, part_ids.as_slice()));
+                            .map(|(bv, pids, _)| (*bv, pids.as_slice()))
+                            == Some((app.boms_version, part_ids.as_slice()));
                         let display: Vec<_> = if cache_hit {
-                            app.request_edit_display_cache.as_ref().unwrap().3.clone()
+                            app.request_edit_display_cache.as_ref().unwrap().2.clone()
                         } else {
                             let built: Vec<_> = {
                                 let boms_map = app.boms_by_id_ref();
@@ -73,11 +60,11 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                                     .collect()
                             };
                             app.request_edit_display_cache =
-                                Some((request_id, app.boms_version, part_ids, built.clone()));
+                                Some((app.boms_version, part_ids, built.clone()));
                             built
                         };
                         for (part_id, partno, description) in &display {
-                            if let Some(re) = app.request_entries.iter_mut().find(|e| e.request_id == request_id && e.part_id == *part_id) {
+                            if let Some(re) = app.request_entries.iter_mut().find(|e| e.part_id == *part_id) {
                                 ui.label(partno);
                                 ui.label(description);
                                 let r = ui.add(egui::DragValue::new(&mut re.quantity).speed(0.5).range(0..=10000));
@@ -95,15 +82,15 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                                     app.pending_open_bom = Some(*part_id);
                                 }
                                 if ui.small_button("Remove").clicked() {
-                                    to_remove.push((request_id, *part_id));
+                                    to_remove.push(*part_id);
                                 }
                                 ui.end_row();
                             }
                         }
                     });
             });
-            for (rid, pid) in to_remove {
-                app.request_entries.retain(|e| !(e.request_id == rid && e.part_id == pid));
+            for pid in to_remove {
+                app.request_entries.retain(|e| e.part_id != pid);
             }
             if changed || app.request_entries.len() != len_before {
                 app.mark_request_dirty();
@@ -115,24 +102,6 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
             if ui.button("Clear List").clicked() {
                 app.clear_request();
             }
-            // if ui.button("Print Preview").clicked() {
-            //     app.trigger_print_preview();
-            // }
-            // #[cfg(not(target_arch = "wasm32"))]
-            // if ui.button("Export PDF").clicked() {
-            //     app.trigger_pdf_download();
-            // }
-            //let csv = app.export_csv();
-            // if !csv.is_empty() && ui.button("Export CSV").clicked() {
-            //     #[cfg(target_arch = "wasm32")]
-            //     crate::app::download_bytes(csv.as_bytes(), "kitting_bom.csv");
-            //     #[cfg(not(target_arch = "wasm32"))]
-            //     {
-            //         if let Err(e) = std::fs::write("kitting_bom.csv", &csv) {
-            //             log::error!("Failed to write CSV: {}", e);
-            //         }
-            //     }
-            // }
         });
 
         ui.add_space(8.0);
@@ -168,11 +137,10 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                 let mut clicked_id = None;
                 let available_height = ui.available_rect_before_wrap().height();
                 egui::ScrollArea::vertical()
-                    .id_salt(("search_results_scroll", request_id))
+                    .id_salt("search_results_scroll")
                     .max_height(available_height)
                     .show(ui, |ui| {
-                        // Header row
-                        egui::Grid::new(("search_results_header", request_id))
+                        egui::Grid::new("search_results_header")
                             .num_columns(3)
                             .spacing([12.0, 4.0])
                             .show(ui, |ui| {

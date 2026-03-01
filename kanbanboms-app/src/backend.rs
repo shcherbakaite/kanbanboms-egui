@@ -410,13 +410,17 @@ impl PocketBaseBackend {
                 let id = Uuid::parse_str(&p.uuid).map_err(|e| {
                     BackendError::Parse(format!("Invalid BOM uuid {}: {}", p.uuid, e))
                 })?;
+                let mut custom_fields = p.custom_fields;
+                if !p.location.is_empty() && !custom_fields.contains_key("Location") {
+                    custom_fields.insert("Location".to_string(), p.location);
+                }
                 Ok(Bom {
                     id,
                     partno: p.partno,
                     description: p.description,
                     batch_quantity: p.batch_quantity,
-                    location: p.location,
-                    custom_fields: p.custom_fields,
+                    location: None,
+                    custom_fields,
                     bom_entry_count: 0, // recomputed in apply_loaded_data
                 })
             })
@@ -612,13 +616,14 @@ impl PocketBaseBackend {
             .collect();
 
         for b in &data.boms {
+            let location = b.custom_fields.get("Location").cloned().unwrap_or_default();
             let pb_new = PbBom {
                 id: None,
                 uuid: b.id.to_string(),
                 partno: b.partno.clone(),
                 description: b.description.clone(),
                 batch_quantity: b.batch_quantity,
-                location: b.location.clone(),
+                location: location.clone(),
                 custom_fields: b.custom_fields.clone(),
             };
             match existing_map.get(&b.id) {
@@ -626,7 +631,7 @@ impl PocketBaseBackend {
                     let changed = existing_pb.partno != b.partno
                         || existing_pb.description != b.description
                         || existing_pb.batch_quantity != b.batch_quantity
-                        || existing_pb.location != b.location
+                        || existing_pb.location != location
                         || existing_pb.custom_fields != b.custom_fields;
                     if changed {
                         if let Some(id) = &existing_pb.id {
@@ -793,13 +798,14 @@ impl PocketBaseBackend {
             .collect();
 
         for b in &data.boms {
+            let location = b.custom_fields.get("Location").cloned().unwrap_or_default();
             let pb_new = PbBom {
                 id: None,
                 uuid: b.id.to_string(),
                 partno: b.partno.clone(),
                 description: b.description.clone(),
                 batch_quantity: b.batch_quantity,
-                location: b.location.clone(),
+                location: location.clone(),
                 custom_fields: b.custom_fields.clone(),
             };
             match existing_map.get(&b.id) {
@@ -807,7 +813,7 @@ impl PocketBaseBackend {
                     let changed = existing_pb.partno != b.partno
                         || existing_pb.description != b.description
                         || existing_pb.batch_quantity != b.batch_quantity
-                        || existing_pb.location != b.location
+                        || existing_pb.location != location
                         || existing_pb.custom_fields != b.custom_fields;
                     if changed {
                         if let Some(id) = &existing_pb.id {

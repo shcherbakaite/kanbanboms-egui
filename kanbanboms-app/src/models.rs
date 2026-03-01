@@ -8,8 +8,10 @@ pub struct Bom {
     pub partno: String,
     pub description: String,
     pub batch_quantity: i32,
-    pub location: String,
-    /// Arbitrary key-value fields associated with the part.
+    /// Deprecated: migrated to custom_fields["Location"] on load. Kept for backward compatibility when deserializing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    /// Arbitrary key-value fields associated with the part (Location, MPN, Lead time, etc.).
     #[serde(default)]
     pub custom_fields: HashMap<String, String>,
     /// Cached count of BOM entries (line items) for this assembly. Recomputed on load and when entries change.
@@ -62,9 +64,20 @@ pub struct Request {
     pub notes: String,
 }
 
+impl Default for Request {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            requested_by: String::new(),
+            machine_number: String::new(),
+            notes: String::new(),
+        }
+    }
+}
+
+/// Assembly in the (single) request. No request_id since there is only one request.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequestEntry {
-    pub request_id: Uuid,
     pub part_id: Uuid,
     pub quantity: i32,
 }
@@ -78,6 +91,17 @@ static RE_EL: Lazy<regex::Regex> =
 /// Match any -XX- pattern (2 letters between dashes). Used for category extraction.
 static RE_CATEGORY: Lazy<regex::Regex> =
     Lazy::new(|| regex::Regex::new(r"(?i)-([a-zA-Z]{2})-").unwrap());
+
+/// Migrates deprecated `location` field to custom_fields["Location"]. Call after loading data.
+pub fn migrate_location_to_custom_fields(boms: &mut [Bom]) {
+    for b in boms.iter_mut() {
+        if let Some(loc) = b.location.take() {
+            if !loc.is_empty() && !b.custom_fields.contains_key("Location") {
+                b.custom_fields.insert("Location".to_string(), loc);
+            }
+        }
+    }
+}
 
 /// Recomputes bom_entry_count for all BOMs from bom_entries. Call after load and when entries change.
 pub fn recompute_bom_entry_counts(boms: &mut [Bom], bom_entries: &[BomEntry]) {
@@ -116,8 +140,8 @@ pub fn normalize_partno(partno: &str) -> String {
     String::new()
 }
 
-/// Aggregated part for print/export: (partno, description, quantity, uom, location, tags)
-pub type AggregatedPart = (String, String, i32, String, String, Vec<String>);
+/// Aggregated part for print/export: (partno, description, quantity, uom, custom_fields, tags)
+pub type AggregatedPart = (String, String, i32, String, HashMap<String, String>, Vec<String>);
 
 /// Recursively collect parts from an assembly's BOM. When expand=true, uom=EA, and the part is an assembly,
 /// recurses into its BOM instead of adding the part itself.
@@ -126,7 +150,7 @@ fn collect_parts_recursive(
     req_qty: i32,
     boms: &HashMap<Uuid, Bom>,
     bom_entries: &[BomEntry],
-) -> Vec<(String, String, i32, String, String, Vec<String>)> {
+) -> Vec<(String, String, i32, String, HashMap<String, String>, Vec<String>)> {
     let mut result = Vec::new();
     let is_assembly = |part_id: Uuid| bom_entries.iter().any(|e| e.bom_id == part_id);
 
@@ -151,7 +175,7 @@ fn collect_parts_recursive(
                 component.description.clone(),
                 qty,
                 uom.to_string(),
-                component.location.clone(),
+                component.custom_fields.clone(),
                 be.tags.clone(),
             ));
         }
@@ -160,14 +184,13 @@ fn collect_parts_recursive(
 }
 
 pub fn get_aggregated_parts(
-    request_id: Uuid,
     boms: &HashMap<Uuid, Bom>,
     bom_entries: &[BomEntry],
     request_entries: &[RequestEntry],
 ) -> Vec<AggregatedPart> {
-    let mut parts: Vec<(String, String, i32, String, String, Vec<String>)> = Vec::new();
+    let mut parts: Vec<(String, String, i32, String, HashMap<String, String>, Vec<String>)> = Vec::new();
 
-    for req_entry in request_entries.iter().filter(|e| e.request_id == request_id) {
+    for req_entry in request_entries.iter() {
         let assembly = match boms.get(&req_entry.part_id) {
             Some(b) => b,
             None => continue,
@@ -178,9 +201,9 @@ pub fn get_aggregated_parts(
     }
 
     // Group by (partno, uom): sum quantities and merge tags
-    let mut groups: HashMap<(String, String), (String, String, i32, String, std::collections::HashSet<String>)> =
+    let mut groups: HashMap<(String, String), (String, String, i32, HashMap<String, String>, std::collections::HashSet<String>)> =
         HashMap::new();
-    for (partno, desc, qty, uom, loc, tags) in parts {
+    for (partno, desc, qty, uom, custom_fields, tags) in parts {
         let key = (partno.clone(), uom.clone());
         groups
             .entry(key)
@@ -191,18 +214,22 @@ pub fn get_aggregated_parts(
             .or_insert_with(|| {
                 let mut tag_set = std::collections::HashSet::new();
                 tag_set.extend(tags.into_iter());
-                (partno, desc, qty, loc, tag_set)
+                (partno, desc, qty, custom_fields, tag_set)
             });
     }
 
     let mut result: Vec<AggregatedPart> = groups
         .into_iter()
-        .map(|((partno, uom), (_, desc, qty, loc, tag_set))| {
+        .map(|((partno, uom), (_, desc, qty, custom_fields, tag_set))| {
             let mut tags: Vec<String> = tag_set.into_iter().collect();
             tags.sort();
-            (partno, desc, qty, uom, loc, tags)
+            (partno, desc, qty, uom, custom_fields, tags)
         })
         .collect();
-    result.sort_by(|a, b| (a.4.as_str(), a.0.as_str()).cmp(&(b.4.as_str(), b.0.as_str())));
+    result.sort_by(|a, b| {
+        let loc_a = a.4.get("Location").map(|s| s.as_str()).unwrap_or("");
+        let loc_b = b.4.get("Location").map(|s| s.as_str()).unwrap_or("");
+        (loc_a, a.0.as_str()).cmp(&(loc_b, b.0.as_str()))
+    });
     result
 }
