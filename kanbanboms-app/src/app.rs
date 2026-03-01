@@ -60,7 +60,7 @@ static HELPFUL_ADVICE: &[&str] = &[
     "A part with BOM entries is an assembly. Add it to request to get all its parts.",
     "Ctrl+Shift+I: paste JSON or CSV. Data merges with existing parts by part number.",
     "Configure PocketBase URL in Backend to sync data across devices.",
-    "Toggle Dark mode in the top bar for reduced eye strain.",
+    "Toggle Dark mode in the top bar for reduced eye strain and hair loss.",
     "Filter Part Master or BOM Edit by typing part number or description.",
     "Expand sub-assemblies in BOM Edit to show nested structure. Use for kitting.",
     "Part numbers identify parts uniquely. Use a consistent format.",
@@ -337,7 +337,7 @@ impl KanbanBomsApp {
             Default::default()
         };
         app.ensure_request();
-        // If PocketBase URL configured, load from server (native only; WASM uses manual Load from server)
+        // If PocketBase URL configured, always load from backend on start
         #[cfg(not(target_arch = "wasm32"))]
         if !app.api_base_url.trim().is_empty() {
             let backend = Backend::PocketBase(PocketBaseBackend::new(&app.api_base_url));
@@ -350,8 +350,9 @@ impl KanbanBomsApp {
                 }
             }
         }
-        if app.boms.is_empty() {
-            app.seed_test_data();
+        #[cfg(target_arch = "wasm32")]
+        if !app.api_base_url.trim().is_empty() {
+            app.load_from_backend(cc.storage);
         }
         recompute_bom_entry_counts(&mut app.boms, &app.bom_entries);
         app
@@ -503,133 +504,6 @@ impl KanbanBomsApp {
 }
 
 impl KanbanBomsApp {
-    /// Add 1000 random parts per category (EA, ME, SD, TR, Others). Skips part numbers that already exist.
-    pub fn add_seed_parts(&mut self) {
-        use crate::models::Bom;
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        let existing: std::collections::HashSet<String> = self.boms.iter().map(|b| b.partno.clone()).collect();
-        const DESCRIPTIONS: &[&str] = &[
-            "Assembly", "Bracket", "Bushing", "Cap", "Clip", "Cover", "Gasket", "Guide",
-            "Handle", "Housing", "Insert", "Plate", "Plug", "Retainer", "Ring", "Seal",
-            "Shim", "Sleeve", "Spacer", "Spring", "Stud", "Washer", "Block", "Rod",
-        ];
-        const PER_CATEGORY: usize = 1000;
-        for (category, base_start) in [("EA", 10000u32), ("ME", 20000), ("SD", 30000), ("TR", 40000)] {
-            for seq in 1..=PER_CATEGORY {
-                let base = base_start + seq as u32;
-                let partno = format!("{:05}-{}-{:03}", base, category, seq);
-                if existing.contains(&partno) {
-                    continue;
-                }
-                let desc_idx = rng.gen_range(0..DESCRIPTIONS.len());
-                let description = format!("{} {}", DESCRIPTIONS[desc_idx], partno);
-                let loc = format!("{}{}", category, (seq % 20) + 1);
-                self.boms.push(Bom {
-                    id: Uuid::new_v4(),
-                    partno,
-                    description,
-                    batch_quantity: 0,
-                    location: loc,
-                    custom_fields: HashMap::new(),
-                    bom_entry_count: 0,
-                });
-            }
-        }
-        for seq in 1..=PER_CATEGORY {
-            let partno = format!("EL-{:04}", seq);
-            if existing.contains(&partno) {
-                continue;
-            }
-            let desc_idx = rng.gen_range(0..DESCRIPTIONS.len());
-            let description = format!("{} {}", DESCRIPTIONS[desc_idx], partno);
-            let loc = format!("EL{}", (seq % 20) + 1);
-            self.boms.push(Bom {
-                id: Uuid::new_v4(),
-                partno,
-                description,
-                batch_quantity: 0,
-                location: loc,
-                custom_fields: HashMap::new(),
-                bom_entry_count: 0,
-            });
-        }
-        self.mark_boms_dirty();
-    }
-
-    fn seed_test_data(&mut self) {
-        use crate::models::{Bom, BomEntry};
-        let mut rng = rand::thread_rng();
-        let b1 = Uuid::new_v4();
-        let b2 = Uuid::new_v4();
-        let b3 = Uuid::new_v4();
-        let b4 = Uuid::new_v4();
-        let b5 = Uuid::new_v4();
-        let b6 = Uuid::new_v4();
-        let mut boms = vec![
-            Bom { id: b1, partno: "10001-AB-001".into(), description: "Main Assembly".into(), batch_quantity: 1, location: "A1".into(), custom_fields: [("Supplier".into(), "Acme Corp".into()), ("Lead Time".into(), "2 weeks".into())].into_iter().collect(), bom_entry_count: 0 },
-            Bom { id: b2, partno: "10002-CD-002".into(), description: "Sub Assembly".into(), batch_quantity: 1, location: "A2".into(), custom_fields: [("Supplier".into(), "Beta Inc".into())].into_iter().collect(), bom_entry_count: 0 },
-            Bom { id: b3, partno: "20001-EF-001".into(), description: "Steel Bolt M8".into(), batch_quantity: 0, location: "B1".into(), custom_fields: HashMap::new(), bom_entry_count: 0 },
-            Bom { id: b4, partno: "20002-GH-002".into(), description: "Hex Nut M8".into(), batch_quantity: 0, location: "B2".into(), custom_fields: [("Lead Time".into(), "1 week".into())].into_iter().collect(), bom_entry_count: 0 },
-            Bom { id: b5, partno: "20003-IJ-003".into(), description: "Washer 8mm".into(), batch_quantity: 0, location: "B3".into(), custom_fields: HashMap::new(), bom_entry_count: 0 },
-            Bom { id: b6, partno: "EL-1234".into(), description: "Electronic Module".into(), batch_quantity: 1, location: "C1".into(), custom_fields: HashMap::new(), bom_entry_count: 0 },
-        ];
-        const DESCRIPTIONS: &[&str] = &[
-            "Assembly", "Bracket", "Bushing", "Cap", "Clip", "Cover", "Gasket", "Guide",
-            "Handle", "Housing", "Insert", "Plate", "Plug", "Retainer", "Ring", "Seal",
-            "Shim", "Sleeve", "Spacer", "Spring", "Stud", "Washer", "Block", "Rod",
-        ];
-        use rand::Rng;
-        const PER_CATEGORY: usize = 1000;
-        for (category, base_start) in [("EA", 10000u32), ("ME", 20000), ("SD", 30000), ("TR", 40000)] {
-            for seq in 1..=PER_CATEGORY {
-                let base = base_start + seq as u32;
-                let partno = format!("{:05}-{}-{:03}", base, category, seq);
-                let desc_idx = rng.gen_range(0..DESCRIPTIONS.len());
-                let description = format!("{} {}", DESCRIPTIONS[desc_idx], partno);
-                let loc = format!("{}{}", category, (seq % 20) + 1);
-                boms.push(Bom {
-                    id: Uuid::new_v4(),
-                    partno,
-                    description,
-                    batch_quantity: 0,
-                    location: loc,
-                    custom_fields: HashMap::new(),
-                    bom_entry_count: 0,
-                });
-            }
-        }
-        for seq in 1..=PER_CATEGORY {
-            let partno = format!("EL-{:04}", seq);
-            let desc_idx = rng.gen_range(0..DESCRIPTIONS.len());
-            let description = format!("{} {}", DESCRIPTIONS[desc_idx], partno);
-            let loc = format!("EL{}", (seq % 20) + 1);
-            boms.push(Bom {
-                id: Uuid::new_v4(),
-                partno,
-                description,
-                batch_quantity: 0,
-                location: loc,
-                custom_fields: HashMap::new(),
-                bom_entry_count: 0,
-            });
-        }
-        self.boms = boms;
-        self.bom_entries = vec![
-            BomEntry { bom_id: b1, part_id: b2, quantity: 2, uom: "EA".into(), disabled: false, expand: true, tags: vec!["subassembly".into()] },
-            BomEntry { bom_id: b1, part_id: b3, quantity: 8, uom: "EA".into(), disabled: false, expand: false, tags: vec!["hardware".into()] },
-            BomEntry { bom_id: b1, part_id: b4, quantity: 8, uom: "EA".into(), disabled: false, expand: false, tags: vec!["hardware".into()] },
-            BomEntry { bom_id: b1, part_id: b5, quantity: 16, uom: "EA".into(), disabled: false, expand: false, tags: vec!["hardware".into()] },
-            BomEntry { bom_id: b1, part_id: b6, quantity: 1, uom: "EA".into(), disabled: false, expand: false, tags: vec!["electronic".into()] },
-            BomEntry { bom_id: b2, part_id: b3, quantity: 4, uom: "EA".into(), disabled: false, expand: false, tags: vec!["hardware".into()] },
-            BomEntry { bom_id: b2, part_id: b4, quantity: 4, uom: "EA".into(), disabled: false, expand: false, tags: vec!["hardware".into()] },
-            BomEntry { bom_id: b2, part_id: b5, quantity: 8, uom: "EA".into(), disabled: false, expand: false, tags: vec!["hardware".into()] },
-        ];
-        if let Some(rid) = self.current_request_id {
-            self.request_entries.push(RequestEntry { request_id: rid, part_id: b1, quantity: 2 });
-        }
-    }
-
     fn ensure_request(&mut self) {
         if self.current_request_id.is_none() || !self.requests.iter().any(|r| r.id == self.current_request_id.unwrap()) {
             let req = Request {
@@ -987,12 +861,9 @@ impl eframe::App for KanbanBomsApp {
             part_master_categories: self.part_master_visible_categories.clone(),
         };
         data.save_to_eframe(storage);
-        // Sync to PocketBase when configured (native only; WASM uses manual Save to server button)
-        #[cfg(not(target_arch = "wasm32"))]
-        if !self.api_base_url.trim().is_empty() {
-            let backend = self.backend();
-            let _ = backend.save_sync(&data, None);
-        }
+        // PocketBase sync is NOT done here: eframe calls save() periodically (auto_save_interval)
+        // and on shutdown. A full sync would spam N DELETE + N POST requests per collection.
+        // PocketBase sync happens only via: "Save to server" button, or debounced auto-save in update().
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
@@ -1054,13 +925,13 @@ impl eframe::App for KanbanBomsApp {
         });
 
         if self.about_modal_open {
-            egui::Window::new("About Kanban BOMs")
+            egui::Window::new("About Kanban BOMs v2.0")
                 .collapsible(false)
                 .resizable(true)
                 .show(ctx, |ui| {
-                    ui.heading("Kanban BOMs");
+                    ui.heading("Kanban BOMs v2.0");
                     ui.add_space(8.0);
-                    ui.label("A desktop and web app for managing Bills of Materials (BOMs) and kitting requests.");
+                    ui.label("A BOM manager and a partmaster killer from the depths of production hell.");
                     ui.add_space(8.0);
                     ui.label("Features:");
                     ui.label("• Part master with categories, locations, and custom fields");
