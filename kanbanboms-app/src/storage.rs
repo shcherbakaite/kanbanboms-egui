@@ -131,7 +131,9 @@ pub fn parse_csv_import(csv_text: &str) -> Result<StoredData, String> {
                 bom_id: asm_id,
                 part_id: comp_id,
                 quantity: qty,
+                uom: "EA".to_string(),
                 disabled,
+                expand: false,
                 tags: Vec::new(),
             });
         }

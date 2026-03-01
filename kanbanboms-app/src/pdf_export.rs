@@ -69,23 +69,26 @@ pub fn generate_pdf(
     doc.push(Paragraph::new("Bill Of Materials").styled(style::Style::new().with_font_size(14)));
     doc.push(elements::Break::new(0.5));
 
-    let mut part_table = TableLayout::new(vec![1, 2, 1, 1]);
+    let mut part_table = TableLayout::new(vec![1, 2, 1, 1, 1]);
     part_table.set_cell_decorator(FrameCellDecorator::new(true, true, false));
     part_table
         .row()
         .element(Text::new("Part Number"))
         .element(Text::new("Description"))
         .element(Text::new("Location"))
+        .element(Text::new("UOM"))
         .element(Text::new("Quantity"))
         .push()
         .map_err(|e| e.to_string())?;
-    for (partno, desc, qty, loc, _tags) in parts {
+    for (partno, desc, qty, uom, loc, _tags) in parts {
         let loc_display = if loc.is_empty() { "N/A" } else { loc.as_str() };
+        let uom_display = if uom.is_empty() { "EA" } else { uom.as_str() };
         part_table
             .row()
             .element(Text::new(partno.clone()))
             .element(Text::new(desc.clone()))
             .element(Text::new(loc_display.to_string()))
+            .element(Text::new(uom_display.to_string()))
             .element(Text::new(qty.to_string()))
             .push()
             .map_err(|e| e.to_string())?;

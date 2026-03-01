@@ -2,18 +2,36 @@ use crate::models::Bom;
 use egui::{RichText, Sense};
 use uuid::Uuid;
 
-/// Filter BOMs where partno or description contains all keywords (case-insensitive AND)
+/// Max results for live search (typing in add field) to avoid iterating full list every frame.
+const SEARCH_BOMS_LIMIT: usize = 50;
+
+/// Filter BOMs where partno or description contains all keywords (case-insensitive AND).
+/// Stops after `limit` results when provided (for responsive live search).
 pub fn search_boms<'a>(boms: &'a [Bom], keywords: &str) -> Vec<&'a Bom> {
+    search_boms_limited(boms, keywords, Some(SEARCH_BOMS_LIMIT))
+}
+
+/// Full search with optional result limit.
+pub fn search_boms_limited<'a>(
+    boms: &'a [Bom],
+    keywords: &str,
+    limit: Option<usize>,
+) -> Vec<&'a Bom> {
     let kws: Vec<&str> = keywords.split_whitespace().filter(|s| !s.is_empty()).collect();
     if kws.is_empty() {
         return Vec::new();
     }
-    boms.iter()
-        .filter(|b| {
-            let text = format!("{}{}", b.partno, b.description).to_lowercase();
-            kws.iter().all(|kw| text.contains(&kw.to_lowercase()))
-        })
-        .collect()
+    let mut out = Vec::new();
+    for b in boms {
+        if limit.map_or(false, |l| out.len() >= l) {
+            break;
+        }
+        let text = format!("{}{}", b.partno, b.description).to_lowercase();
+        if kws.iter().all(|kw| text.contains(&kw.to_lowercase())) {
+            out.push(b);
+        }
+    }
+    out
 }
 
 /// Returns Some(bom_id) when user selects a BOM

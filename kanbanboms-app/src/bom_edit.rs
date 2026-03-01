@@ -1,6 +1,6 @@
 use crate::app::KanbanBomsApp;
 use crate::bom_search::search_boms;
-use crate::models::{Bom, BomEntry, BomRevision};
+use crate::models::{Bom, BomEntry, UOM_OPTIONS};
 use egui::{Key, KeyboardShortcut, Modifiers};
 use egui_data_table::viewer::{
     DecodeErrorBehavior, MoveDirection, RowCodec, UiActionContext,
@@ -20,8 +20,10 @@ pub struct BomEditRow {
     pub partno: String,
     pub description: String,
     pub quantity: i32,
+    pub uom: String,
     pub tags: String,
     pub disabled: bool,
+    pub expand: bool,
 }
 
 /// Get bom_entries for the given bom_id, either from current state or from a specific revision.
@@ -52,8 +54,10 @@ fn bom_edit_rows_for_table(app: &KanbanBomsApp, entries: &[BomEntry]) -> Vec<Bom
                 partno: part.partno.clone(),
                 description: part.description.clone(),
                 quantity: e.quantity,
+                uom: if e.uom.is_empty() { "EA".to_string() } else { e.uom.clone() },
                 tags: e.tags.join(" "),
                 disabled: e.disabled,
+                expand: e.expand,
             })
         })
         .collect()
@@ -86,20 +90,25 @@ pub fn sync_table_to_bom_entries(app: &mut KanbanBomsApp, bom_id: Uuid, rows: &[
             .split_whitespace()
             .map(|s| s.to_string())
             .collect();
+        let uom = if row.uom.is_empty() { "EA".to_string() } else { row.uom.clone() };
         if let Some(entry) = app
             .bom_entries
             .iter_mut()
             .find(|e| e.bom_id == bom_id && e.part_id == row.part_id)
         {
             entry.quantity = row.quantity;
+            entry.uom = uom;
             entry.tags = tags;
             entry.disabled = row.disabled;
+            entry.expand = row.expand;
         } else {
             app.bom_entries.push(BomEntry {
                 bom_id,
                 part_id: row.part_id,
                 quantity: row.quantity,
+                uom,
                 disabled: row.disabled,
+                expand: row.expand,
                 tags,
             });
         }
@@ -119,8 +128,10 @@ impl RowCodec<BomEditRow> for BomEditCodec {
             partno: String::new(),
             description: String::new(),
             quantity: 1,
+            uom: "EA".to_string(),
             tags: String::new(),
             disabled: false,
+            expand: false,
         }
     }
 
@@ -129,8 +140,10 @@ impl RowCodec<BomEditRow> for BomEditCodec {
             0 => dst.push_str(&src_row.partno),
             1 => dst.push_str(&src_row.description),
             2 => dst.push_str(&src_row.quantity.to_string()),
-            3 => dst.push_str(&src_row.tags),
-            4 => dst.push_str(if src_row.disabled { "Yes" } else { "No" }),
+            3 => dst.push_str(&src_row.uom),
+            4 => dst.push_str(&src_row.tags),
+            5 => dst.push_str(if src_row.disabled { "Yes" } else { "No" }),
+            6 => dst.push_str(if src_row.expand { "Yes" } else { "No" }),
             _ => {}
         }
     }
@@ -145,8 +158,16 @@ impl RowCodec<BomEditRow> for BomEditCodec {
             0 => dst_row.partno = src_data.to_string(),
             1 => dst_row.description = src_data.to_string(),
             2 => dst_row.quantity = src_data.parse().unwrap_or(1),
-            3 => dst_row.tags = src_data.to_string(),
-            4 => dst_row.disabled = src_data.eq_ignore_ascii_case("yes"),
+            3 => {
+                dst_row.uom = UOM_OPTIONS
+                    .iter()
+                    .find(|&&o| o.eq_ignore_ascii_case(src_data))
+                    .map(|s| (*s).to_string())
+                    .unwrap_or_else(|| "EA".to_string());
+            }
+            4 => dst_row.tags = src_data.to_string(),
+            5 => dst_row.disabled = src_data.eq_ignore_ascii_case("yes"),
+            6 => dst_row.expand = src_data.eq_ignore_ascii_case("yes"),
             _ => {}
         }
         Ok(())
@@ -176,7 +197,7 @@ impl BomEditViewer {
 
 impl RowViewer<BomEditRow> for BomEditViewer {
     fn num_columns(&mut self) -> usize {
-        5
+        7
     }
 
     fn column_name(&mut self, column: usize) -> Cow<'static, str> {
@@ -184,8 +205,10 @@ impl RowViewer<BomEditRow> for BomEditViewer {
             0 => Cow::Borrowed("Part Number"),
             1 => Cow::Borrowed("Description"),
             2 => Cow::Borrowed("Qty"),
-            3 => Cow::Borrowed("Tags"),
-            4 => Cow::Borrowed("Disabled"),
+            3 => Cow::Borrowed("UOM"),
+            4 => Cow::Borrowed("Tags"),
+            5 => Cow::Borrowed("Disabled"),
+            6 => Cow::Borrowed("Expand"),
             _ => Cow::Borrowed(""),
         }
     }
@@ -196,22 +219,14 @@ impl RowViewer<BomEditRow> for BomEditViewer {
 
     fn show_cell_view(&mut self, ui: &mut egui::Ui, row: &BomEditRow, column: usize) {
         match column {
-            0 => {
-                ui.label(&row.partno);
-            }
-            1 => {
-                ui.label(&row.description);
-            }
-            2 => {
-                ui.label(row.quantity.to_string());
-            }
-            3 => {
-                ui.label(&row.tags);
-            }
-            4 => {
-                ui.label(if row.disabled { "Yes" } else { "No" });
-            }
-            _ => {}
+            0 => { ui.label(&row.partno); }
+            1 => { ui.label(&row.description); }
+            2 => { ui.label(row.quantity.to_string()); }
+            3 => { ui.label(if row.uom.is_empty() { "EA" } else { &row.uom }); }
+            4 => { ui.label(&row.tags); }
+            5 => { ui.label(if row.disabled { "Yes" } else { "No" }); }
+            6 => { ui.label(if row.expand { "Yes" } else { "No" }); }
+            _ => { ui.label(""); }
         }
     }
 
@@ -288,10 +303,34 @@ impl RowViewer<BomEditRow> for BomEditViewer {
                     .speed(0.5)
                     .range(1..=10000),
             )),
-            3 => Some(ui.add(
+            3 => {
+                let selected_text = if row.uom.is_empty() { "EA" } else { row.uom.as_str() };
+                let response = egui::ComboBox::from_id_salt(("bom_uom", row.part_id))
+                    .selected_text(selected_text)
+                    .width(60.0)
+                    .show_ui(ui, |ui| {
+                        for &opt in UOM_OPTIONS {
+                            if ui.selectable_label(row.uom.eq_ignore_ascii_case(opt), opt).clicked() {
+                                row.uom = opt.to_string();
+                            }
+                        }
+                    })
+                    .response;
+                Some(response)
+            }
+            4 => Some(ui.add(
                 egui::TextEdit::singleline(&mut row.tags).desired_width(120.0),
             )),
-            4 => Some(ui.checkbox(&mut row.disabled, "")),
+            5 => Some(ui.checkbox(&mut row.disabled, "")),
+            6 => {
+                let is_ea = row.uom.is_empty() || row.uom.eq_ignore_ascii_case("EA");
+                let mut expand = row.expand;
+                let response = ui.add_enabled(is_ea, egui::Checkbox::new(&mut expand, ""));
+                if response.changed() {
+                    row.expand = expand;
+                }
+                Some(response)
+            }
             _ => None,
         }
     }
@@ -309,8 +348,10 @@ impl RowViewer<BomEditRow> for BomEditViewer {
                 dst.part_id = src.part_id;
             }
             2 => dst.quantity = src.quantity,
-            3 => dst.tags = src.tags.clone(),
-            4 => dst.disabled = src.disabled,
+            3 => dst.uom = src.uom.clone(),
+            4 => dst.tags = src.tags.clone(),
+            5 => dst.disabled = src.disabled,
+            6 => dst.expand = src.expand,
             _ => {}
         }
     }
@@ -321,8 +362,10 @@ impl RowViewer<BomEditRow> for BomEditViewer {
             partno: String::new(),
             description: String::new(),
             quantity: 1,
+            uom: "EA".to_string(),
             tags: String::new(),
             disabled: false,
+            expand: false,
         }
     }
 
@@ -420,6 +463,24 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                 });
                 ui.add_space(4.0);
 
+                // Batch quantity editor (assembly-level)
+                let mut batch_quantity = bom.batch_quantity;
+                ui.horizontal(|ui| {
+                    ui.label("Batch quantity:");
+                    let r = ui.add_enabled(
+                        app.bom_edit_viewing_revision.is_none(),
+                        egui::DragValue::new(&mut batch_quantity)
+                            .range(0..=10000)
+                            .speed(0.5),
+                    );
+                    if r.changed() {
+                        if let Some(b) = app.boms.iter_mut().find(|x| x.id == bom_id) {
+                            b.batch_quantity = batch_quantity;
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+
                 // Revision dropdown
                 let revisions: Vec<u32> = app
                     .bom_revisions
@@ -461,6 +522,29 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                 let is_viewing_revision = app.bom_edit_viewing_revision.is_some();
                 if is_viewing_revision {
                     ui.colored_label(egui::Color32::GRAY, "Viewing old revision (read-only)");
+                    if let Some(rev) = app.bom_edit_viewing_revision {
+                        if let Some(revision) = app
+                            .bom_revisions
+                            .get(&bom_id)
+                            .and_then(|revs| revs.iter().find(|r| r.revision == rev))
+                        {
+                            if let Some(ref created_at) = revision.created_at {
+                                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created_at) {
+                                    let formatted =
+                                        dt.format("%Y-%m-%d %H:%M").to_string();
+                                    ui.label(format!("Date: {}", formatted));
+                                } else {
+                                    ui.label(format!("Date: {}", created_at));
+                                }
+                            }
+                            if !revision.comment.is_empty() {
+                                ui.label(format!("Comment: {}", revision.comment));
+                            }
+                        }
+                        if ui.button("Revert to this revision").clicked() {
+                            app.bom_revert_revision_modal = Some((bom_id, rev));
+                        }
+                    }
                 }
                 ui.strong("Components");
                 ui.add_space(4.0);
@@ -501,28 +585,16 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                             partno: String::new(),
                             description: String::new(),
                             quantity: 1,
+                            uom: "EA".to_string(),
                             tags: String::new(),
                             disabled: false,
+                            expand: false,
                         }));
                     }
                     if ui.add_enabled(!is_viewing_revision, egui::Button::new("Save")).clicked() {
                         let rows: Vec<BomEditRow> = app.bom_edit_table.iter().cloned().collect();
                         sync_table_to_bom_entries(app, bom_id, &rows);
-                        // Create revision snapshot and increment
-                        let rev = *app.bom_revision_next.entry(bom_id).or_insert(1);
-                        let entries: Vec<BomEntry> = app
-                            .bom_entries
-                            .iter()
-                            .filter(|e| e.bom_id == bom_id)
-                            .cloned()
-                            .collect();
-                        app.bom_revisions
-                            .entry(bom_id)
-                            .or_default()
-                            .insert(0, BomRevision { revision: rev, entries });
-                        *app.bom_revision_next.get_mut(&bom_id).unwrap() = rev + 1;
-                        app.bom_edit_viewing_revision = None; // Stay on current after save
-                        app.mark_dirty();
+                        app.bom_save_revision_modal = Some((bom_id, String::new()));
                     }
                 });
             }

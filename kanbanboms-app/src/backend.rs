@@ -56,9 +56,17 @@ struct PbBomEntry {
     bom_uuid: String,
     part_uuid: String,
     quantity: i32,
+    #[serde(default = "default_uom")]
+    uom: String,
     disabled: bool,
     #[serde(default)]
+    expand: bool,
+    #[serde(default)]
     tags: Vec<String>,
+}
+
+fn default_uom() -> String {
+    "EA".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -68,6 +76,10 @@ struct PbBomRevision {
     bom_uuid: String,
     revision: u32,
     entries: Vec<PbBomEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    comment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -262,7 +274,9 @@ impl PocketBaseBackend {
                         bom_id,
                         part_id,
                         quantity: p.quantity,
+                        uom: if p.uom.is_empty() { "EA".to_string() } else { p.uom },
                         disabled: p.disabled,
+                        expand: p.expand,
                         tags: p.tags,
                     })
                 } else {
@@ -289,7 +303,9 @@ impl PocketBaseBackend {
                             bom_id: bom_u,
                             part_id: part_u,
                             quantity: e.quantity,
+                            uom: if e.uom.is_empty() { "EA".to_string() } else { e.uom },
                             disabled: e.disabled,
+                            expand: e.expand,
                             tags: e.tags,
                         })
                     } else {
@@ -300,6 +316,8 @@ impl PocketBaseBackend {
             let rev = BomRevision {
                 revision: pr.revision,
                 entries,
+                comment: pr.comment.unwrap_or_default(),
+                created_at: pr.created_at,
             };
             bom_revisions
                 .entry(bom_id)
@@ -366,7 +384,9 @@ impl PocketBaseBackend {
                 bom_uuid: e.bom_id.to_string(),
                 part_uuid: e.part_id.to_string(),
                 quantity: e.quantity,
+                uom: if e.uom.is_empty() { "EA".to_string() } else { e.uom.clone() },
                 disabled: e.disabled,
+                expand: e.expand,
                 tags: e.tags.clone(),
             };
             self.create_record_blocking("bom_entries", &pb)?;
@@ -382,7 +402,9 @@ impl PocketBaseBackend {
                         bom_uuid: e.bom_id.to_string(),
                         part_uuid: e.part_id.to_string(),
                         quantity: e.quantity,
+                        uom: if e.uom.is_empty() { "EA".to_string() } else { e.uom.clone() },
                         disabled: e.disabled,
+                        expand: e.expand,
                         tags: e.tags.clone(),
                     })
                     .collect();
@@ -391,6 +413,12 @@ impl PocketBaseBackend {
                     bom_uuid: bom_id.to_string(),
                     revision: r.revision,
                     entries,
+                    comment: if r.comment.is_empty() {
+                        None
+                    } else {
+                        Some(r.comment.clone())
+                    },
+                    created_at: r.created_at.clone(),
                 };
                 self.create_record_blocking("bom_revisions", &pb)?;
             }
@@ -437,7 +465,9 @@ impl PocketBaseBackend {
                 bom_uuid: e.bom_id.to_string(),
                 part_uuid: e.part_id.to_string(),
                 quantity: e.quantity,
+                uom: if e.uom.is_empty() { "EA".to_string() } else { e.uom.clone() },
                 disabled: e.disabled,
+                expand: e.expand,
                 tags: e.tags.clone(),
             };
             self.create_record("bom_entries", &pb).await?;
@@ -453,7 +483,9 @@ impl PocketBaseBackend {
                         bom_uuid: e.bom_id.to_string(),
                         part_uuid: e.part_id.to_string(),
                         quantity: e.quantity,
+                        uom: if e.uom.is_empty() { "EA".to_string() } else { e.uom.clone() },
                         disabled: e.disabled,
+                        expand: e.expand,
                         tags: e.tags.clone(),
                     })
                     .collect();
@@ -462,6 +494,12 @@ impl PocketBaseBackend {
                     bom_uuid: bom_id.to_string(),
                     revision: r.revision,
                     entries,
+                    comment: if r.comment.is_empty() {
+                        None
+                    } else {
+                        Some(r.comment.clone())
+                    },
+                    created_at: r.created_at.clone(),
                 };
                 self.create_record("bom_revisions", &pb).await?;
             }

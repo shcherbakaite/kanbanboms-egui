@@ -2,15 +2,81 @@ use crate::bom_edit::BomEditRow;
 use crate::bom_preview::BomPreviewRow;
 use crate::part_master::{PartMasterRow, UsageReportRow};
 use crate::dock::{show_dock_ui, DockTab, PartEditState, RequestTabState};
-use crate::models::{get_aggregated_parts, recompute_bom_entry_counts, Bom, BomEntry, BomRevision, Request, RequestEntry};
+use crate::models::{get_aggregated_parts, recompute_bom_entry_counts, AggregatedPart, Bom, BomEntry, BomRevision, Request, RequestEntry};
 use crate::html_export::generate_html_print_preview;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::pdf_export::generate_pdf;
 use crate::backend::{Backend, LocalBackend, PocketBaseBackend};
 use crate::storage::{parse_csv_import, StoredData};
+use chrono::Utc;
 use egui::{Key, KeyboardShortcut, Modifiers};
 use std::collections::HashMap;
 use uuid::Uuid;
+
+/// Clippy-style mascot ASCII art for bottom-right overlay
+static BG_GRAPHIC: &str = r"
+                                                  ▄████▄
+                                                 ▐▌░░░░▐▌
+                                              ▄▀▀█▀░░░░▐▌
+                                              ▄░▐▄░░░░░▐▌▀▀▄
+                                            ▐▀░▄▄░▀▌░▄▀▀░▀▄░▀
+                                            ▐░▀██▀░▌▐░▄██▄░▌
+                                             ▀▄░▄▄▀░▐░░▀▀░░▌
+                                                █░░░░▀▄▄░▄▀
+                                                █░█░░░░█░▐
+                                                █░█░░░▐▌░█
+                                                █░█░░░▐▌░█
+                                                ▐▌▐▌░░░█░█
+                                                ▐▌░█▄░▐▌░█
+                                                 █░░▀▀▀░░▐▌
+                                                 ▐▌░░░░░░█
+                                                  █▄░░░░▄█
+                                                   ▀████▀
+";
+
+static HELPFUL_ADVICE: &[&str] = &[
+    "Add assemblies to your request by right-clicking them in Part Master",
+    "Ctrl+Shift+I opens the Import dialog to paste CSV or JSON data. (Secret)",
+    "Use the Backend button to configure PocketBase for cloud sync.",
+    "Part Master shows all parts; filter by category tabs or search.",
+    "Ctrl+Z undoes edits in text fields. Save BOM revisions to preserve history.",
+    "Part numbers must be unique. Use Part Master to add new parts.",
+    "Set quantity in the Request Edit tab. Aggregation multiplies by request quantities.",
+    "Click Save in BOM Edit to create a revision with a comment.",
+    "Data auto-saves to PocketBase when configured. Local storage saves on exit.",
+    "Search by part number or description in Part Master or BOM Edit.",
+    "Add assemblies to your request for kitting; the system aggregates all sub-parts.",
+    "Preview shows aggregated parts from the current request. Use tags to filter.",
+    "Expand a sub-assembly in BOM Edit to include its parts when building kitting lists.",
+    "Quantity per assembly: multiply by how many assemblies you're requesting.",
+    "Use the search bar in Part Master or BOM Edit to find parts quickly.",
+    "Expand: when Yes, sub-assembly parts are listed instead of the assembly itself. Only applies when UOM is EA.",
+    "Location codes help locate parts in physical storage. Edit in Part Master.",
+    "View past revisions in BOM Edit to compare changes. Save creates new revisions.",
+    "Batch quantity on assemblies: default requested amount when adding to a request.",
+    "Add custom fields in Part Master for supplier, lead time, or other metadata.",
+    "Tags: label BOM lines (e.g. hardware, electronic). Toggle tag visibility in Preview to filter the kitting list.",
+    "Preview tab shows the aggregated kitting list. Export to CSV, HTML, or PDF.",
+    "A part with BOM entries is an assembly. Add it to request to get all its parts.",
+    "Ctrl+Shift+I: paste JSON or CSV. Data merges with existing parts by part number.",
+    "Configure PocketBase URL in Backend to sync data across devices.",
+    "Toggle Dark mode in the top bar for reduced eye strain.",
+    "Filter Part Master or BOM Edit by typing part number or description.",
+    "Expand sub-assemblies in BOM Edit to show nested structure. Use for kitting.",
+    "Part numbers identify parts uniquely. Use a consistent format.",
+    "Disable BOM entries to exclude them from kitting without deleting.",
+    "Requested quantities multiply through assembly hierarchies for total part counts.",
+    "Preview tab: generate HTML for printing. Opens in browser or downloads.",
+    "Export PDF from the Preview tab (native only). Same layout as print preview.",
+    "Requested by and machine number: add in Request Edit for kitting labels.",
+    "Machine number identifies the request. Use in Request Edit.",
+    "Add parts to BOM: use Add Part in BOM Edit. Create new parts in Part Master.",
+    "Part Master categories (EA, ME, SD, TR, Others) filter the parts list.",
+    "You can create your own part master categories.",
+    "Part descriptions appear in the kitting list. Edit in Part Master.",
+    "UOM: EA (each), IN (inches), M (meters), MM (millimeters). Use EA for countable parts, others for length.",
+];
+
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
@@ -44,12 +110,24 @@ pub struct KanbanBomsApp {
     /// In-progress tags edit: (bom_id, part_id) -> current text (allows spaces while typing)
     #[serde(skip)]
     pub bom_edit_tags_buffer: HashMap<(Uuid, Uuid), String>,
+    /// BOM Preview: which columns to include in HTML print (Part Number, Description, Location, UOM, Qty, Tags). PDF ignores this.
+    #[serde(skip, default = "default_bom_preview_columns_in_html")]
+    pub bom_preview_columns_in_html: [bool; 6],
     /// BOM Preview: data table (egui-data-table)
     #[serde(skip)]
     pub bom_preview_table: egui_data_table::DataTable<BomPreviewRow>,
     /// BOM Preview: last sync key (data_version, request_id, parts_len, filtered_len, total_qty) to avoid replacing rows every frame
     #[serde(skip)]
     pub bom_preview_last_sync_key: Option<(u64, Uuid, usize, usize, i32)>,
+    /// Cached (bom_entries, aggregated parts) for BOM preview; only valid when Preview tab is active. Cleared when switching to Edit.
+    #[serde(skip)]
+    pub bom_preview_parts_cache: Option<(u64, Uuid, Vec<BomEntry>, Vec<AggregatedPart>)>,
+    /// When switching to Preview with cache miss: defer heavy BOM build to next frame so the mode switch paints immediately.
+    #[serde(skip)]
+    pub bom_preview_deferred_build: Option<Uuid>,
+    /// Request Edit: cached (partno, description) per assembly; invalid when assemblies or boms change. Avoids boms_by_id_ref() every frame when editing quantity.
+    #[serde(skip)]
+    pub request_edit_display_cache: Option<(Uuid, u64, Vec<Uuid>, Vec<(Uuid, String, String)>)>,
     /// Part Master: selected worksheet tab index
     #[serde(skip)]
     pub part_master_tab: usize,
@@ -79,9 +157,9 @@ pub struct KanbanBomsApp {
     /// Part Master: data table (egui-data-table)
     #[serde(skip)]
     pub part_master_table: egui_data_table::DataTable<PartMasterRow>,
-    /// Part Master: last sync key (data_version, tab, filter, boms_len, custom_sig) to avoid replacing rows every frame
+    /// Part Master: last sync key (boms_version, tab, filter, boms_len, custom_sig, categories_len) to avoid replacing rows every frame
     #[serde(skip)]
-    pub part_master_last_sync_key: Option<(u64, usize, String, usize, String)>,
+    pub part_master_last_sync_key: Option<(u64, usize, String, usize, String, usize)>,
     /// BOM Edit: data table (egui-data-table)
     #[serde(skip)]
     pub bom_edit_table: egui_data_table::DataTable<BomEditRow>,
@@ -97,6 +175,12 @@ pub struct KanbanBomsApp {
     /// BOM Edit: which revision is being viewed (None = current/editable)
     #[serde(skip)]
     pub bom_edit_viewing_revision: Option<u32>,
+    /// BOM Save: modal for revision comment. Some(bom_id, comment) = modal open.
+    #[serde(skip)]
+    pub bom_save_revision_modal: Option<(Uuid, String)>,
+    /// BOM Revert: modal for confirmation. Some(bom_id, revision) = modal open.
+    #[serde(skip)]
+    pub bom_revert_revision_modal: Option<(Uuid, u32)>,
     /// When Part Master "Edit BOM" is clicked, set this; dock will open a BOM Edit tab and clear it.
     #[serde(skip)]
     pub pending_open_bom: Option<Uuid>,
@@ -129,6 +213,12 @@ pub struct KanbanBomsApp {
     pub status_flash: Option<(String, bool)>,
     #[serde(skip)]
     pub status_flash_at: Option<f64>,
+    /// About window open
+    #[serde(skip)]
+    pub about_modal_open: bool,
+    /// Dark mode (persisted)
+    #[serde(default)]
+    pub dark_mode: bool,
     /// WASM: pending load result (channel receiver)
     #[serde(skip)]
     #[cfg(target_arch = "wasm32")]
@@ -140,9 +230,25 @@ pub struct KanbanBomsApp {
     /// Data changed since last save; triggers auto-save when backend is configured
     #[serde(skip)]
     pub data_dirty: bool,
+    /// When data_dirty was first set (for debounce). None = reset timer on next mark_dirty.
+    #[serde(skip)]
+    pub data_dirty_debounce_at: Option<f64>,
     /// Incremented on every data change; included in view sync keys so all views refresh when any view saves
     #[serde(skip, default)]
     pub data_version: u64,
+    /// Incremented only when boms/bom_entries change; Part Master and Usage Report use this to avoid rebuilds on request_entries changes
+    #[serde(skip, default)]
+    pub boms_version: u64,
+    /// Mascot overlay: time when first shown. Hidden after ~20s.
+    #[serde(skip)]
+    pub mascot_shown_at: Option<f64>,
+    /// Mascot overlay: random advice index (picked when first shown).
+    #[serde(skip)]
+    pub mascot_advice_index: Option<usize>,
+}
+
+fn default_bom_preview_columns_in_html() -> [bool; 6] {
+    [true; 6]
 }
 
 fn default_visible_categories() -> Vec<String> {
@@ -170,8 +276,12 @@ impl Default for KanbanBomsApp {
             partno_add_error: None,
             preview_tag_visible: HashMap::new(),
             bom_edit_tags_buffer: HashMap::new(),
+            bom_preview_columns_in_html: [true; 6],
             bom_preview_table: egui_data_table::DataTable::new(),
             bom_preview_last_sync_key: None,
+            bom_preview_parts_cache: None,
+            bom_preview_deferred_build: None,
+            request_edit_display_cache: None,
             part_master_tab: 0,
             part_master_visible_categories: default_visible_categories(),
             part_master_add_category_open: false,
@@ -188,6 +298,8 @@ impl Default for KanbanBomsApp {
             bom_revisions: HashMap::new(),
             bom_revision_next: HashMap::new(),
             bom_edit_viewing_revision: None,
+            bom_save_revision_modal: None,
+            bom_revert_revision_modal: None,
             pending_open_bom: None,
             part_master_usage_report: None,
             usage_report_table: egui_data_table::DataTable::new(),
@@ -199,12 +311,18 @@ impl Default for KanbanBomsApp {
             backend_error: None,
             status_flash: None,
             status_flash_at: None,
+            about_modal_open: false,
+            dark_mode: false,
             #[cfg(target_arch = "wasm32")]
             backend_load_rx: None,
             #[cfg(target_arch = "wasm32")]
             backend_save_rx: None,
             data_dirty: false,
+            data_dirty_debounce_at: None,
             data_version: 0,
+            boms_version: 0,
+            mascot_shown_at: None,
+            mascot_advice_index: None,
         };
         app.ensure_request();
         app
@@ -296,7 +414,21 @@ impl KanbanBomsApp {
 
     pub(crate) fn mark_dirty(&mut self) {
         self.data_dirty = true;
+        self.data_dirty_debounce_at = None; // reset debounce timer
         self.data_version = self.data_version.wrapping_add(1);
+    }
+
+    /// Call when only request_entries/requests change (local state, not persisted to server).
+    /// Increments data_version for BOM preview cache invalidation, but does NOT trigger server save.
+    pub(crate) fn mark_request_dirty(&mut self) {
+        self.data_version = self.data_version.wrapping_add(1);
+    }
+
+    /// Call when boms or bom_entries change; increments both data_version and boms_version.
+    /// Part Master and Usage Report use boms_version to avoid rebuilds when only request_entries change.
+    pub(crate) fn mark_boms_dirty(&mut self) {
+        self.mark_dirty();
+        self.boms_version = self.boms_version.wrapping_add(1);
     }
 
     fn save_to_backend(&mut self, storage: Option<&mut dyn eframe::Storage>) {
@@ -422,7 +554,7 @@ impl KanbanBomsApp {
                 bom_entry_count: 0,
             });
         }
-        self.mark_dirty();
+        self.mark_boms_dirty();
     }
 
     fn seed_test_data(&mut self) {
@@ -484,14 +616,14 @@ impl KanbanBomsApp {
         }
         self.boms = boms;
         self.bom_entries = vec![
-            BomEntry { bom_id: b1, part_id: b2, quantity: 2, disabled: false, tags: vec!["subassembly".into()] },
-            BomEntry { bom_id: b1, part_id: b3, quantity: 8, disabled: false, tags: vec!["hardware".into()] },
-            BomEntry { bom_id: b1, part_id: b4, quantity: 8, disabled: false, tags: vec!["hardware".into()] },
-            BomEntry { bom_id: b1, part_id: b5, quantity: 16, disabled: false, tags: vec!["hardware".into()] },
-            BomEntry { bom_id: b1, part_id: b6, quantity: 1, disabled: false, tags: vec!["electronic".into()] },
-            BomEntry { bom_id: b2, part_id: b3, quantity: 4, disabled: false, tags: vec!["hardware".into()] },
-            BomEntry { bom_id: b2, part_id: b4, quantity: 4, disabled: false, tags: vec!["hardware".into()] },
-            BomEntry { bom_id: b2, part_id: b5, quantity: 8, disabled: false, tags: vec!["hardware".into()] },
+            BomEntry { bom_id: b1, part_id: b2, quantity: 2, uom: "EA".into(), disabled: false, expand: true, tags: vec!["subassembly".into()] },
+            BomEntry { bom_id: b1, part_id: b3, quantity: 8, uom: "EA".into(), disabled: false, expand: false, tags: vec!["hardware".into()] },
+            BomEntry { bom_id: b1, part_id: b4, quantity: 8, uom: "EA".into(), disabled: false, expand: false, tags: vec!["hardware".into()] },
+            BomEntry { bom_id: b1, part_id: b5, quantity: 16, uom: "EA".into(), disabled: false, expand: false, tags: vec!["hardware".into()] },
+            BomEntry { bom_id: b1, part_id: b6, quantity: 1, uom: "EA".into(), disabled: false, expand: false, tags: vec!["electronic".into()] },
+            BomEntry { bom_id: b2, part_id: b3, quantity: 4, uom: "EA".into(), disabled: false, expand: false, tags: vec!["hardware".into()] },
+            BomEntry { bom_id: b2, part_id: b4, quantity: 4, uom: "EA".into(), disabled: false, expand: false, tags: vec!["hardware".into()] },
+            BomEntry { bom_id: b2, part_id: b5, quantity: 8, uom: "EA".into(), disabled: false, expand: false, tags: vec!["hardware".into()] },
         ];
         if let Some(rid) = self.current_request_id {
             self.request_entries.push(RequestEntry { request_id: rid, part_id: b1, quantity: 2 });
@@ -508,7 +640,7 @@ impl KanbanBomsApp {
             };
             self.current_request_id = Some(req.id);
             self.requests.push(req);
-            self.mark_dirty();
+            self.mark_request_dirty();
         }
     }
 
@@ -516,16 +648,32 @@ impl KanbanBomsApp {
         self.boms.iter().map(|b| (b.id, b.clone())).collect()
     }
 
+    /// O(1) lookup by id without cloning; use when only reading partno/description.
+    pub(crate) fn boms_by_id_ref(&self) -> HashMap<Uuid, &Bom> {
+        self.boms.iter().map(|b| (b.id, b)).collect()
+    }
+
     /// BOM entries for request aggregation: uses latest revision when available, else bom_entries.
+    /// Recursively includes entries for sub-assemblies when expand=true, so get_aggregated_parts
+    /// can flatten expanded BOMs in the preview.
     pub(crate) fn effective_bom_entries_for_request(&self, request_id: Uuid) -> Vec<BomEntry> {
         let mut result = Vec::new();
-        let assembly_ids: std::collections::HashSet<Uuid> = self
+        let mut to_process: Vec<Uuid> = self
             .request_entries
             .iter()
             .filter(|e| e.request_id == request_id)
             .map(|e| e.part_id)
             .collect();
-        for bom_id in assembly_ids {
+        let mut processed = std::collections::HashSet::new();
+        let is_assembly = |part_id: Uuid| {
+            self.bom_entries.iter().any(|e| e.bom_id == part_id)
+                || self.bom_revisions.contains_key(&part_id)
+        };
+        while let Some(bom_id) = to_process.pop() {
+            if processed.contains(&bom_id) {
+                continue;
+            }
+            processed.insert(bom_id);
             let entries = if let Some(revs) = self.bom_revisions.get(&bom_id) {
                 revs.iter()
                     .max_by_key(|r| r.revision)
@@ -544,6 +692,12 @@ impl KanbanBomsApp {
                     .cloned()
                     .collect()
             };
+            for e in &entries {
+                let uom_ea = e.uom.is_empty() || e.uom.eq_ignore_ascii_case("EA");
+                if e.expand && uom_ea && is_assembly(e.part_id) {
+                    to_process.push(e.part_id);
+                }
+            }
             result.extend(entries);
         }
         result
@@ -567,13 +721,13 @@ impl KanbanBomsApp {
                 quantity: bom.batch_quantity.max(1),
             });
         }
-        self.mark_dirty();
+        self.mark_request_dirty();
     }
 
     pub fn clear_request(&mut self) {
         if let Some(rid) = self.current_request_id {
             self.request_entries.retain(|e| e.request_id != rid);
-            self.mark_dirty();
+            self.mark_request_dirty();
         }
     }
 
@@ -593,9 +747,10 @@ impl KanbanBomsApp {
         let mut w = Vec::new();
         {
             let mut writer = csv::Writer::from_writer(&mut w);
-            let _ = writer.write_record(&["Part Number", "Description", "Quantity"]);
-            for (partno, desc, qty, _, _) in &parts {
-                let _ = writer.write_record(&[partno, desc, &qty.to_string()]);
+            let _ = writer.write_record(&["Part Number", "Description", "UOM", "Quantity"]);
+            for (partno, desc, qty, uom, _, _) in &parts {
+                let uom_display = if uom.is_empty() { "EA" } else { uom.as_str() };
+                let _ = writer.write_record(&[partno, desc, uom_display, &qty.to_string()]);
             }
             let _ = writer.flush();
         }
@@ -627,7 +782,7 @@ impl KanbanBomsApp {
             &self.request_entries,
         );
         // Filter by tag visibility (same as preview)
-        parts.retain(|(_, _, _, _, tags)| {
+        parts.retain(|(_, _, _, _, _, tags)| {
             tags.is_empty()
                 || tags
                     .iter()
@@ -669,7 +824,7 @@ impl KanbanBomsApp {
             &self.request_entries,
         );
         // Filter by tag visibility (same as preview)
-        parts.retain(|(_, _, _, _, tags)| {
+        parts.retain(|(_, _, _, _, _, tags)| {
             tags.is_empty()
                 || tags
                     .iter()
@@ -678,7 +833,15 @@ impl KanbanBomsApp {
         // Apply preview data grid sort order
         let sort_state = self.bom_preview_table.sort_state();
         crate::html_export::sort_parts_by_state(&mut parts, &sort_state);
-        let html = generate_html_print_preview(&request, &assemblies, &boms_map, &parts);
+        let column_order = self.bom_preview_table.column_order();
+        let html = generate_html_print_preview(
+            &request,
+            &assemblies,
+            &boms_map,
+            &parts,
+            &self.bom_preview_columns_in_html,
+            column_order.as_deref(),
+        );
         if let Some(path) = crate::app::open_html_in_browser(&html) {
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -715,7 +878,9 @@ impl KanbanBomsApp {
                         bom_id: new_bom_id,
                         part_id: new_part_id,
                         quantity: be.quantity,
+                        uom: be.uom.clone(),
                         disabled: be.disabled,
+                        expand: be.expand,
                         tags: be.tags.clone(),
                     });
                 }
@@ -832,7 +997,11 @@ impl eframe::App for KanbanBomsApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_visuals(egui::Visuals::light());
+        ctx.set_visuals(if self.dark_mode {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        });
 
         #[cfg(target_arch = "wasm32")]
         self.poll_backend_pending();
@@ -857,6 +1026,12 @@ impl eframe::App for KanbanBomsApp {
             }
         }
 
+        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.checkbox(&mut self.dark_mode, "Dark mode");
+            });
+        });
+
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if let Some((ref msg, is_error)) = self.status_flash {
@@ -868,12 +1043,46 @@ impl eframe::App for KanbanBomsApp {
                     ui.colored_label(color, msg);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("About").clicked() {
+                        self.about_modal_open = true;
+                    }
                     if ui.button("Backend").clicked() {
                         self.backend_modal_open = true;
                     }
                 });
             });
         });
+
+        if self.about_modal_open {
+            egui::Window::new("About Kanban BOMs")
+                .collapsible(false)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.heading("Kanban BOMs");
+                    ui.add_space(8.0);
+                    ui.label("A desktop and web app for managing Bills of Materials (BOMs) and kitting requests.");
+                    ui.add_space(8.0);
+                    ui.label("Features:");
+                    ui.label("• Part master with categories, locations, and custom fields");
+                    ui.label("• BOM editing with hierarchical assemblies, tags, and revision history");
+                    ui.label("• Kitting requests with aggregated part lists");
+                    ui.label("• CSV/JSON import, HTML print preview, PDF export (native)");
+                    ui.label("• Optional PocketBase backend for cloud sync");
+                    ui.add_space(8.0);
+                    ui.label("Built with:");
+                    ui.label("• egui / eframe — immediate-mode GUI");
+                    ui.label("• egui_dock — tabbed dock layout");
+                    ui.label("• egui-data-table — sortable data tables");
+                    ui.label("• genpdf — PDF generation (native)");
+                    ui.label("• PocketBase — optional backend");
+                    ui.add_space(8.0);
+                    ui.label("Rust • egui • MIT-style licenses");
+                    ui.add_space(8.0);
+                    if ui.button("Close").clicked() {
+                        self.about_modal_open = false;
+                    }
+                });
+        }
 
         if self.backend_modal_open {
             egui::Window::new("Backend (PocketBase)")
@@ -914,13 +1123,18 @@ impl eframe::App for KanbanBomsApp {
             egui::Window::new("Import Data")
                 .collapsible(false)
                 .resizable(true)
+                .default_size([500.0, 450.0])
                 .show(ctx, |ui| {
                     ui.label("Paste CSV or JSON data:");
-                    ui.add(
-                        egui::TextEdit::multiline(&mut self.import_text)
-                            .desired_width(400.0)
-                            .desired_rows(10),
-                    );
+                    egui::ScrollArea::vertical()
+                        .max_height(350.0)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.import_text)
+                                    .desired_width(f32::INFINITY)
+                                    .desired_rows(10),
+                            );
+                        });
                     if let Some(ref err) = self.import_error {
                         ui.colored_label(egui::Color32::RED, err);
                     }
@@ -955,6 +1169,118 @@ impl eframe::App for KanbanBomsApp {
                 });
         }
 
+        let mut bom_save_confirm = false;
+        let mut bom_save_cancel = false;
+        if let Some((_bom_id, comment)) = self.bom_save_revision_modal.as_mut() {
+            egui::Window::new("Save BOM Revision")
+                .collapsible(false)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.label("What changed in this revision?");
+                    ui.add(
+                        egui::TextEdit::multiline(comment)
+                            .desired_width(400.0)
+                            .desired_rows(4),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button("Save").clicked() {
+                            bom_save_confirm = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            bom_save_cancel = true;
+                        }
+                    });
+                });
+        }
+        if bom_save_confirm {
+            if let Some((bom_id, comment)) = self.bom_save_revision_modal.take() {
+                let entries: Vec<BomEntry> = self
+                    .bom_entries
+                    .iter()
+                    .filter(|e| e.bom_id == bom_id)
+                    .cloned()
+                    .collect();
+                let rev = *self.bom_revision_next.entry(bom_id).or_insert(1);
+                self.bom_revisions
+                    .entry(bom_id)
+                    .or_default()
+                    .insert(
+                        0,
+                        BomRevision {
+                            revision: rev,
+                            entries,
+                            comment: comment.trim().to_string(),
+                            created_at: Some(Utc::now().to_rfc3339()),
+                        },
+                    );
+                *self.bom_revision_next.get_mut(&bom_id).unwrap() = rev + 1;
+                self.bom_edit_viewing_revision = None;
+                self.mark_boms_dirty();
+            }
+        }
+        if bom_save_cancel {
+            self.bom_save_revision_modal = None;
+        }
+
+        let mut bom_revert_confirm = false;
+        let mut bom_revert_cancel = false;
+        if let Some((_bom_id, rev)) = self.bom_revert_revision_modal.as_ref() {
+            egui::Window::new("Revert BOM Revision")
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "Revert to revision {}? This will create a new revision with the same contents and make it the current (editable) state.",
+                        rev
+                    ));
+                    ui.horizontal(|ui| {
+                        if ui.button("Revert").clicked() {
+                            bom_revert_confirm = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            bom_revert_cancel = true;
+                        }
+                    });
+                });
+        }
+        if bom_revert_confirm {
+            if let Some((bom_id, rev)) = self.bom_revert_revision_modal.take() {
+                let entries: Vec<BomEntry> = self
+                    .bom_revisions
+                    .get(&bom_id)
+                    .and_then(|revs| revs.iter().find(|r| r.revision == rev))
+                    .map(|r| r.entries.clone())
+                    .unwrap_or_default();
+                self.bom_entries.retain(|e| e.bom_id != bom_id);
+                self.bom_entries.extend(entries);
+                let new_rev = *self.bom_revision_next.entry(bom_id).or_insert(1);
+                self.bom_revisions
+                    .entry(bom_id)
+                    .or_default()
+                    .insert(
+                        0,
+                        BomRevision {
+                            revision: new_rev,
+                            entries: self
+                                .bom_entries
+                                .iter()
+                                .filter(|e| e.bom_id == bom_id)
+                                .cloned()
+                                .collect(),
+                            comment: format!("Reverted to revision {}", rev),
+                            created_at: Some(Utc::now().to_rfc3339()),
+                        },
+                    );
+                *self.bom_revision_next.get_mut(&bom_id).unwrap() = new_rev + 1;
+                self.bom_edit_viewing_revision = None;
+                self.bom_edit_last_sync_key = None;
+                crate::models::recompute_bom_entry_counts(&mut self.boms, &self.bom_entries);
+                self.mark_boms_dirty();
+            }
+        }
+        if bom_revert_cancel {
+            self.bom_revert_revision_modal = None;
+        }
+
         let mut ds = self.dock_state.take();
         if ds.is_none() {
             ds = Some(crate::dock::make_initial_dock_state(self));
@@ -964,11 +1290,53 @@ impl eframe::App for KanbanBomsApp {
         }
         self.dock_state = ds;
 
-        // Auto-save on every change when PocketBase is configured
+        // Auto-save when PocketBase is configured. Debounce to avoid freezing UI on add/remove.
         // (Local backend persists via eframe::App::save on exit/timer)
         if self.data_dirty && !self.api_base_url.trim().is_empty() {
-            self.save_to_backend(None);
-            self.data_dirty = false;
+            let now = ctx.input(|i| i.time);
+            if self.data_dirty_debounce_at.is_none() {
+                self.data_dirty_debounce_at = Some(now);
+            }
+            if let Some(t) = self.data_dirty_debounce_at {
+                if now - t >= 1.5 {
+                    self.save_to_backend(None);
+                    self.data_dirty = false;
+                    self.data_dirty_debounce_at = None;
+                }
+            }
+        }
+
+        // Mascot overlay: bottom-right, shows random advice for ~20s then disappears
+        let now = ctx.input(|i| i.time);
+        if self.mascot_shown_at.is_none() {
+            self.mascot_shown_at = Some(now);
+            self.mascot_advice_index = Some(rand::Rng::gen_range(&mut rand::thread_rng(), 0..HELPFUL_ADVICE.len()));
+        }
+        let show_duration = 20.0;
+        if let (Some(at), Some(idx)) = (self.mascot_shown_at, self.mascot_advice_index) {
+            if now - at < show_duration {
+                let advice = HELPFUL_ADVICE[idx];
+                egui::Area::new("mascot_overlay".into())
+                    .anchor(egui::Align2::RIGHT_BOTTOM, egui::Vec2::new(-32.0, -32.0))
+                    .order(egui::Order::Foreground)
+                    .interactable(false)
+                    .show(ctx, |ui| {
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new(advice)
+                                    .size(14.0)
+                                    .color(egui::Color32::from_gray(140)),
+                            );
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new(BG_GRAPHIC)
+                                    .monospace()
+                                    .size(12.0)
+                                    .color(egui::Color32::from_gray(100)),
+                            );
+                        });
+                    });
+            }
         }
     }
 }

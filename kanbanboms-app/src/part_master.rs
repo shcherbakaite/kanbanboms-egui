@@ -41,8 +41,9 @@ fn parts_in_category<'a>(boms: &'a [Bom], category: &str) -> Vec<&'a Bom> {
     out
 }
 
-fn part_has_bom(app: &KanbanBomsApp, part_id: Uuid) -> bool {
-    app.bom_entries.iter().any(|e| e.bom_id == part_id)
+/// Set of bom_ids that have at least one entry. Built once per Part Master rebuild.
+fn bom_ids_with_entries(app: &KanbanBomsApp) -> HashSet<Uuid> {
+    app.bom_entries.iter().map(|e| e.bom_id).collect()
 }
 
 const TAB_BAR_HEIGHT: f32 = 36.0;
@@ -74,6 +75,7 @@ fn part_rows_for_table(app: &KanbanBomsApp) -> Vec<PartMasterRow> {
         .get(selected_tab_index(app))
         .map(|s| s.as_str())
         .unwrap_or("All");
+    let has_bom = bom_ids_with_entries(app);
     parts_in_category(&app.boms, category)
         .into_iter()
         .filter(|p| matches_filter(p, &app.part_master_filter))
@@ -81,7 +83,7 @@ fn part_rows_for_table(app: &KanbanBomsApp) -> Vec<PartMasterRow> {
             part_id: p.id,
             partno: p.partno.clone(),
             description: p.description.clone(),
-            has_bom: part_has_bom(app, p.id),
+            has_bom: has_bom.contains(&p.id),
             bom_entry_count: p.bom_entry_count,
             custom_fields: p.custom_fields.clone(),
         })
@@ -89,14 +91,16 @@ fn part_rows_for_table(app: &KanbanBomsApp) -> Vec<PartMasterRow> {
 }
 
 /// Sync key to avoid replacing table rows every frame (preserves selection/scroll).
-fn part_master_sync_key(app: &KanbanBomsApp) -> (u64, usize, String, usize, String) {
+/// Uses boms_version (not data_version) so editing assembly quantity in Request doesn't trigger Part Master rebuild.
+fn part_master_sync_key(app: &KanbanBomsApp) -> (u64, usize, String, usize, String, usize) {
     let custom_sig = all_custom_field_names(&app.boms).join("|");
     (
-        app.data_version,
+        app.boms_version,
         app.part_master_tab,
         app.part_master_filter.clone(),
         app.boms.len(),
         custom_sig,
+        app.part_master_visible_categories.len(),
     )
 }
 
@@ -523,7 +527,7 @@ pub fn part_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, tab_id: Uuid) {
         }
     });
     if saved {
-        app.mark_dirty();
+        app.mark_boms_dirty();
     }
     });
 }
@@ -773,7 +777,7 @@ fn usage_report_sync_key(app: &KanbanBomsApp, part_id: Uuid) -> (u64, Uuid, usiz
         .iter()
         .filter(|e| e.part_id == part_id && !e.disabled)
         .count();
-    (app.data_version, part_id, count)
+    (app.boms_version, part_id, count)
 }
 
 /// UI for the Usage Report dock tab: lists all BOMs where the part is used.

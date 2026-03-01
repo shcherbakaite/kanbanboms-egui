@@ -40,29 +40,64 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                 .id_salt(("request_assembly_scroll", request_id))
                 .show(ui, |ui| {
                 egui::Grid::new(("request_assembly_grid", request_id))
-                    .num_columns(4)
+                    .num_columns(6)
                     .spacing([12.0, 4.0])
                     .show(ui, |ui| {
                         ui.strong("Part Number");
                         ui.strong("Description");
                         ui.strong("Quantity");
+                        ui.strong("Revision");
+                        ui.strong("");
                         ui.strong("");
                         ui.end_row();
 
-                        for entry in &entries {
-                            if let Some(bom) = app.boms.iter().find(|b| b.id == entry.part_id) {
-                                if let Some(re) = app.request_entries.iter_mut().find(|e| e.request_id == request_id && e.part_id == entry.part_id) {
-                                    ui.label(&bom.partno);
-                                    ui.label(&bom.description);
-                                    let r = ui.add(egui::DragValue::new(&mut re.quantity).speed(0.5).range(0..=10000));
-                                    if r.changed() {
-                                        changed = true;
-                                    }
-                                    if ui.small_button("Remove").clicked() {
-                                        to_remove.push((request_id, entry.part_id));
-                                    }
-                                    ui.end_row();
+                        // Cache display by (request_id, boms_version, part_ids) - quantity changes don't affect partno/description
+                        let part_ids: Vec<Uuid> = entries.iter().map(|e| e.part_id).collect();
+                        let cache_hit = app
+                            .request_edit_display_cache
+                            .as_ref()
+                            .map(|(rid, bv, pids, _)| (*rid, *bv, pids.as_slice()))
+                            == Some((request_id, app.boms_version, part_ids.as_slice()));
+                        let display: Vec<_> = if cache_hit {
+                            app.request_edit_display_cache.as_ref().unwrap().3.clone()
+                        } else {
+                            let built: Vec<_> = {
+                                let boms_map = app.boms_by_id_ref();
+                                entries
+                                    .iter()
+                                    .filter_map(|e| {
+                                        boms_map.get(&e.part_id).map(|b| {
+                                            (e.part_id, b.partno.clone(), b.description.clone())
+                                        })
+                                    })
+                                    .collect()
+                            };
+                            app.request_edit_display_cache =
+                                Some((request_id, app.boms_version, part_ids, built.clone()));
+                            built
+                        };
+                        for (part_id, partno, description) in &display {
+                            if let Some(re) = app.request_entries.iter_mut().find(|e| e.request_id == request_id && e.part_id == *part_id) {
+                                ui.label(partno);
+                                ui.label(description);
+                                let r = ui.add(egui::DragValue::new(&mut re.quantity).speed(0.5).range(0..=10000));
+                                let rev_label = app
+                                    .bom_revisions
+                                    .get(part_id)
+                                    .and_then(|revs| revs.iter().max_by_key(|r| r.revision))
+                                    .map(|r| format!("Revision {}", r.revision))
+                                    .unwrap_or_else(|| "—".to_string());
+                                ui.label(rev_label);
+                                if r.changed() {
+                                    changed = true;
                                 }
+                                if ui.small_button("Edit BOM").clicked() {
+                                    app.pending_open_bom = Some(*part_id);
+                                }
+                                if ui.small_button("Remove").clicked() {
+                                    to_remove.push((request_id, *part_id));
+                                }
+                                ui.end_row();
                             }
                         }
                     });
@@ -71,7 +106,7 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                 app.request_entries.retain(|e| !(e.request_id == rid && e.part_id == pid));
             }
             if changed || app.request_entries.len() != len_before {
-                app.mark_dirty();
+                app.mark_request_dirty();
             }
         }
 
@@ -125,35 +160,36 @@ pub fn request_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
         if !app.partno_add_input.is_empty() {
             let results: Vec<_> = search_boms(&app.boms, &app.partno_add_input)
                 .into_iter()
-                .map(|b| (b.id, b.partno.clone(), b.description.clone()))
+                .map(|b| (b.id, b.partno.clone(), b.description.clone(), b.bom_entry_count))
                 .collect();
             if results.is_empty() {
                 ui.label("No matching BOMs");
             } else {
                 let mut clicked_id = None;
+                let available_height = ui.available_rect_before_wrap().height();
                 egui::ScrollArea::vertical()
                     .id_salt(("search_results_scroll", request_id))
-                    .max_height(150.0)
+                    .max_height(available_height)
                     .show(ui, |ui| {
-                    egui::Grid::new(("search_results_grid", request_id))
-                        .num_columns(3)
-                        .spacing([12.0, 4.0])
-                        .show(ui, |ui| {
-                            ui.strong("Part Number");
-                            ui.strong("Description");
-                            ui.strong("");
-                            ui.end_row();
-
-                            for (id, partno, description) in &results {
-                                ui.label(partno);
-                                ui.label(description);
-                                if ui.small_button("Add").clicked() {
-                                    clicked_id = Some(*id);
-                                }
+                        // Header row
+                        egui::Grid::new(("search_results_header", request_id))
+                            .num_columns(3)
+                            .spacing([12.0, 4.0])
+                            .show(ui, |ui| {
+                                ui.strong("Part Number");
+                                ui.strong("Description");
+                                ui.strong("BOM");
                                 ui.end_row();
+                            });
+
+                        for (id, partno, description, bom_count) in &results {
+                            let label = format!("{}  {}  📋 {}", partno, description, bom_count);
+                            let response = ui.selectable_label(false, label);
+                            if response.clicked() {
+                                clicked_id = Some(*id);
                             }
-                        });
-                });
+                        }
+                    });
                 if let Some(id) = clicked_id {
                     app.add_assembly_to_request(id);
                     app.partno_add_input.clear();

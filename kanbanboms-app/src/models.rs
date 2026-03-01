@@ -17,12 +17,26 @@ pub struct Bom {
     pub bom_entry_count: u32,
 }
 
+fn default_uom() -> String {
+    "EA".to_string()
+}
+
+/// Unit of measure options for BOM entries.
+pub const UOM_OPTIONS: &[&str] = &["EA", "IN", "M", "MM"];
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BomEntry {
     pub bom_id: Uuid,
     pub part_id: Uuid,
     pub quantity: i32,
+    /// Unit of measure: EA (each), IN (inches), M (meters), MM (millimeters).
+    #[serde(default = "default_uom")]
+    pub uom: String,
     pub disabled: bool,
+    /// When true and part_id is an assembly, its BOM contents are expanded into the request BOM.
+    /// Only applies when uom is EA (each).
+    #[serde(default)]
+    pub expand: bool,
     #[serde(default)]
     pub tags: Vec<String>,
 }
@@ -32,6 +46,12 @@ pub struct BomEntry {
 pub struct BomRevision {
     pub revision: u32,
     pub entries: Vec<BomEntry>,
+    /// User comment describing what changed in this revision.
+    #[serde(default)]
+    pub comment: String,
+    /// When this revision was saved (ISO 8601).
+    #[serde(default)]
+    pub created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -96,8 +116,48 @@ pub fn normalize_partno(partno: &str) -> String {
     String::new()
 }
 
-/// Aggregated part for print/export: (partno, description, quantity, location, tags)
-pub type AggregatedPart = (String, String, i32, String, Vec<String>);
+/// Aggregated part for print/export: (partno, description, quantity, uom, location, tags)
+pub type AggregatedPart = (String, String, i32, String, String, Vec<String>);
+
+/// Recursively collect parts from an assembly's BOM. When expand=true, uom=EA, and the part is an assembly,
+/// recurses into its BOM instead of adding the part itself.
+fn collect_parts_recursive(
+    assembly_id: Uuid,
+    req_qty: i32,
+    boms: &HashMap<Uuid, Bom>,
+    bom_entries: &[BomEntry],
+) -> Vec<(String, String, i32, String, String, Vec<String>)> {
+    let mut result = Vec::new();
+    let is_assembly = |part_id: Uuid| bom_entries.iter().any(|e| e.bom_id == part_id);
+
+    for be in bom_entries.iter().filter(|e| e.bom_id == assembly_id && !e.disabled) {
+        let component = match boms.get(&be.part_id) {
+            Some(b) => b,
+            None => continue,
+        };
+        let qty = req_qty * be.quantity;
+        if qty <= 0 {
+            continue;
+        }
+
+        let uom = if be.uom.is_empty() { "EA" } else { be.uom.as_str() };
+        let can_expand = uom.eq_ignore_ascii_case("EA");
+        if be.expand && can_expand && is_assembly(be.part_id) {
+            let sub_parts = collect_parts_recursive(be.part_id, qty, boms, bom_entries);
+            result.extend(sub_parts);
+        } else {
+            result.push((
+                component.partno.clone(),
+                component.description.clone(),
+                qty,
+                uom.to_string(),
+                component.location.clone(),
+                be.tags.clone(),
+            ));
+        }
+    }
+    result
+}
 
 pub fn get_aggregated_parts(
     request_id: Uuid,
@@ -105,7 +165,7 @@ pub fn get_aggregated_parts(
     bom_entries: &[BomEntry],
     request_entries: &[RequestEntry],
 ) -> Vec<AggregatedPart> {
-    let mut parts: Vec<(String, String, i32, String, Vec<String>)> = Vec::new();
+    let mut parts: Vec<(String, String, i32, String, String, Vec<String>)> = Vec::new();
 
     for req_entry in request_entries.iter().filter(|e| e.request_id == request_id) {
         let assembly = match boms.get(&req_entry.part_id) {
@@ -113,31 +173,17 @@ pub fn get_aggregated_parts(
             None => continue,
         };
         let req_qty = req_entry.quantity;
-
-        for be in bom_entries.iter().filter(|e| e.bom_id == assembly.id && !e.disabled) {
-            let component = match boms.get(&be.part_id) {
-                Some(b) => b,
-                None => continue,
-            };
-            let qty = req_qty * be.quantity;
-            if qty > 0 {
-                parts.push((
-                    component.partno.clone(),
-                    component.description.clone(),
-                    qty,
-                    component.location.clone(),
-                    be.tags.clone(),
-                ));
-            }
-        }
+        let assembly_parts = collect_parts_recursive(assembly.id, req_qty, boms, bom_entries);
+        parts.extend(assembly_parts);
     }
 
-    // Group by partno: sum quantities and merge tags
-    let mut groups: HashMap<String, (String, String, i32, String, std::collections::HashSet<String>)> =
+    // Group by (partno, uom): sum quantities and merge tags
+    let mut groups: HashMap<(String, String), (String, String, i32, String, std::collections::HashSet<String>)> =
         HashMap::new();
-    for (partno, desc, qty, loc, tags) in parts {
+    for (partno, desc, qty, uom, loc, tags) in parts {
+        let key = (partno.clone(), uom.clone());
         groups
-            .entry(partno.clone())
+            .entry(key)
             .and_modify(|e| {
                 e.2 += qty;
                 e.4.extend(tags.iter().cloned());
@@ -151,12 +197,12 @@ pub fn get_aggregated_parts(
 
     let mut result: Vec<AggregatedPart> = groups
         .into_iter()
-        .map(|(_, (partno, desc, qty, loc, tag_set))| {
+        .map(|((partno, uom), (_, desc, qty, loc, tag_set))| {
             let mut tags: Vec<String> = tag_set.into_iter().collect();
             tags.sort();
-            (partno, desc, qty, loc, tags)
+            (partno, desc, qty, uom, loc, tags)
         })
         .collect();
-    result.sort_by(|a, b| (a.3.as_str(), a.0.as_str()).cmp(&(b.3.as_str(), b.0.as_str())));
+    result.sort_by(|a, b| (a.4.as_str(), a.0.as_str()).cmp(&(b.4.as_str(), b.0.as_str())));
     result
 }

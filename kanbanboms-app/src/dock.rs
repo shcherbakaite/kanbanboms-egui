@@ -142,6 +142,9 @@ impl TabViewer for AppTabViewer<'_> {
                 if state.preview_mode {
                     bom_preview_ui(self.app, ui);
                 } else {
+                    // Clear BOM preview cache and deferred build when switching to Edit so we don't hold stale data
+                    self.app.bom_preview_parts_cache = None;
+                    self.app.bom_preview_deferred_build = None;
                     request_edit_ui(self.app, ui);
                 }
 

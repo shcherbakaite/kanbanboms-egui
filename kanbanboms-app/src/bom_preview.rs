@@ -16,6 +16,7 @@ pub struct BomPreviewRow {
     pub partno: String,
     pub description: String,
     pub location: String,
+    pub uom: String,
     pub quantity: i32,
     pub tags: String,
 }
@@ -31,6 +32,7 @@ impl RowCodec<BomPreviewRow> for BomPreviewCodec {
             partno: String::new(),
             description: String::new(),
             location: String::new(),
+            uom: String::new(),
             quantity: 0,
             tags: String::new(),
         }
@@ -41,8 +43,9 @@ impl RowCodec<BomPreviewRow> for BomPreviewCodec {
             0 => dst.push_str(&src_row.partno),
             1 => dst.push_str(&src_row.description),
             2 => dst.push_str(&src_row.location),
-            3 => dst.push_str(&src_row.quantity.to_string()),
-            4 => dst.push_str(&src_row.tags),
+            3 => dst.push_str(if src_row.uom.is_empty() { "EA" } else { &src_row.uom }),
+            4 => dst.push_str(&src_row.quantity.to_string()),
+            5 => dst.push_str(&src_row.tags),
             _ => {}
         }
     }
@@ -61,7 +64,7 @@ struct BomPreviewViewer;
 
 impl RowViewer<BomPreviewRow> for BomPreviewViewer {
     fn num_columns(&mut self) -> usize {
-        5
+        6
     }
 
     fn column_name(&mut self, column: usize) -> Cow<'static, str> {
@@ -69,8 +72,9 @@ impl RowViewer<BomPreviewRow> for BomPreviewViewer {
             0 => Cow::Borrowed("Part Number"),
             1 => Cow::Borrowed("Description"),
             2 => Cow::Borrowed("Location"),
-            3 => Cow::Borrowed("Quantity"),
-            4 => Cow::Borrowed("Tags"),
+            3 => Cow::Borrowed("UOM"),
+            4 => Cow::Borrowed("Quantity"),
+            5 => Cow::Borrowed("Tags"),
             _ => Cow::Borrowed(""),
         }
     }
@@ -83,7 +87,7 @@ impl RowViewer<BomPreviewRow> for BomPreviewViewer {
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
-        column < 5
+        column < 6
     }
 
     fn compare_cell(&self, row_a: &BomPreviewRow, row_b: &BomPreviewRow, column: usize) -> std::cmp::Ordering {
@@ -91,8 +95,13 @@ impl RowViewer<BomPreviewRow> for BomPreviewViewer {
             0 => row_a.partno.cmp(&row_b.partno),
             1 => row_a.description.cmp(&row_b.description),
             2 => row_a.location.cmp(&row_b.location),
-            3 => row_a.quantity.cmp(&row_b.quantity),
-            4 => row_a.tags.cmp(&row_b.tags),
+            3 => {
+                let ua = if row_a.uom.is_empty() { "EA" } else { &row_a.uom };
+                let ub = if row_b.uom.is_empty() { "EA" } else { &row_b.uom };
+                ua.cmp(ub)
+            }
+            4 => row_a.quantity.cmp(&row_b.quantity),
+            5 => row_a.tags.cmp(&row_b.tags),
             _ => std::cmp::Ordering::Equal,
         }
     }
@@ -107,23 +116,16 @@ impl RowViewer<BomPreviewRow> for BomPreviewViewer {
 
     fn show_cell_view(&mut self, ui: &mut egui::Ui, row: &BomPreviewRow, column: usize) {
         match column {
-            0 => {
-                ui.label(&row.partno);
-            }
-            1 => {
-                ui.label(&row.description);
-            }
+            0 => { ui.label(&row.partno); }
+            1 => { ui.label(&row.description); }
             2 => {
                 let loc = if row.location.is_empty() { "N/A" } else { row.location.as_str() };
                 ui.label(loc);
             }
-            3 => {
-                ui.label(row.quantity.to_string());
-            }
-            4 => {
-                ui.label(if row.tags.is_empty() { "—" } else { &row.tags });
-            }
-            _ => {}
+            3 => { ui.label(if row.uom.is_empty() { "EA" } else { &row.uom }); }
+            4 => { ui.label(row.quantity.to_string()); }
+            5 => { ui.label(if row.tags.is_empty() { "—" } else { &row.tags }); }
+            _ => { ui.label(""); }
         }
     }
 
@@ -137,8 +139,9 @@ impl RowViewer<BomPreviewRow> for BomPreviewViewer {
             0 => Some(ui.label(&row.partno)),
             1 => Some(ui.label(&row.description)),
             2 => Some(ui.label(if row.location.is_empty() { "N/A" } else { &row.location })),
-            3 => Some(ui.label(row.quantity.to_string())),
-            4 => Some(ui.label(if row.tags.is_empty() { "—" } else { &row.tags })),
+            3 => Some(ui.label(if row.uom.is_empty() { "EA" } else { &row.uom })),
+            4 => Some(ui.label(row.quantity.to_string())),
+            5 => Some(ui.label(if row.tags.is_empty() { "—" } else { &row.tags })),
             _ => None,
         }
     }
@@ -148,8 +151,9 @@ impl RowViewer<BomPreviewRow> for BomPreviewViewer {
             0 => dst.partno = src.partno.clone(),
             1 => dst.description = src.description.clone(),
             2 => dst.location = src.location.clone(),
-            3 => dst.quantity = src.quantity,
-            4 => dst.tags = src.tags.clone(),
+            3 => dst.uom = src.uom.clone(),
+            4 => dst.quantity = src.quantity,
+            5 => dst.tags = src.tags.clone(),
             _ => {}
         }
     }
@@ -159,6 +163,7 @@ impl RowViewer<BomPreviewRow> for BomPreviewViewer {
             partno: String::new(),
             description: String::new(),
             location: String::new(),
+            uom: String::new(),
             quantity: 0,
             tags: String::new(),
         }
@@ -215,10 +220,13 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
     let width = avail.width().min(CENTERED_MAX_WIDTH);
     let left = avail.left() + (avail.width() - width) / 2.0;
     let rect = egui::Rect::from_min_size(egui::pos2(left, avail.top()), egui::vec2(width, avail.height()));
-    egui::ScrollArea::vertical()
-        .id_salt(("bom_preview_scroll", request_id))
-        .show(ui, |ui| {
+
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        let inner = ui.available_rect_before_wrap();
+        egui::ScrollArea::vertical()
+            .max_height((inner.height() - 52.0).max(100.0))
+            .id_salt(("bom_preview_scroll", request_id))
+            .show(ui, |ui| {
         ui.heading("Kitting BOM - Preview");
         ui.add_space(8.0);
 
@@ -235,14 +243,36 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
             return;
         }
 
-        let boms_map = app.boms_by_id();
-        let bom_entries = app.effective_bom_entries_for_request(request_id);
-        let parts = get_aggregated_parts(
-            request_id,
-            &boms_map,
-            &bom_entries,
-            &app.request_entries,
-        );
+        // Only rebuild BOM when Preview is active; use cache when data unchanged.
+        // Defer heavy build by one frame so the Preview mode switch paints immediately (avoids missed clicks).
+        let cache_key = (app.data_version, request_id);
+        let cache_hit = app.bom_preview_parts_cache.as_ref().map(|(k0, k1, _, _)| (*k0, *k1)) == Some(cache_key);
+        let deferred = app.bom_preview_deferred_build == Some(request_id);
+
+        if !cache_hit && !deferred {
+            // First frame after switching to Preview with cache miss: show loading, defer build to next frame
+            app.bom_preview_deferred_build = Some(request_id);
+            ui.label("Building BOM…");
+            ui.ctx().request_repaint();
+            return;
+        }
+
+        let (bom_entries, parts): (Vec<_>, Vec<_>) = if cache_hit {
+            let cached = app.bom_preview_parts_cache.as_ref().unwrap();
+            (cached.2.clone(), cached.3.clone())
+        } else {
+            app.bom_preview_deferred_build = None;
+            let bom_entries = app.effective_bom_entries_for_request(request_id);
+            let boms_map = app.boms_by_id();
+            let p = get_aggregated_parts(
+                request_id,
+                &boms_map,
+                &bom_entries,
+                &app.request_entries,
+            );
+            app.bom_preview_parts_cache = Some((cache_key.0, cache_key.1, bom_entries.clone(), p.clone()));
+            (bom_entries, p)
+        };
 
         let date = Local::now().format("%m/%d/%Y").to_string();
         ui.label(format!("Date: {}", date));
@@ -262,8 +292,9 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                     ui.strong("Description");
                     ui.strong("Tags");
                     ui.end_row();
+                    let boms_map = app.boms_by_id_ref();
                     for ae in &assemblies {
-                        if let Some(bom) = app.boms.iter().find(|b| b.id == ae.part_id) {
+                        if let Some(bom) = boms_map.get(&ae.part_id) {
                             let assembly_tags: std::collections::HashSet<String> = bom_entries
                                 .iter()
                                 .filter(|be| be.bom_id == ae.part_id)
@@ -288,7 +319,7 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
         // Tag filters after assemblies (always show section)
         let all_tags: std::collections::HashSet<String> = parts
             .iter()
-            .flat_map(|(_, _, _, _, tags)| tags.iter().cloned())
+            .flat_map(|(_, _, _, _, _, tags)| tags.iter().cloned())
             .collect();
         for tag in &all_tags {
             app.preview_tag_visible
@@ -315,7 +346,7 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
         // Filter parts: show if part has no tags, or has at least one visible tag
         let filtered_parts: Vec<_> = parts
             .iter()
-            .filter(|(_, _, _, _, tags)| {
+            .filter(|(_, _, _, _, _, tags)| {
                 tags.is_empty()
                     || tags.iter().any(|t| app.preview_tag_visible.get(t).copied().unwrap_or(true))
             })
@@ -323,7 +354,7 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
             .collect();
 
         // Sync table rows when data changes (data_version ensures other-view saves trigger refresh)
-        let total_qty: i32 = filtered_parts.iter().map(|(_, _, q, _, _)| *q).sum();
+        let total_qty: i32 = filtered_parts.iter().map(|(_, _, q, _, _, _)| *q).sum();
         let sync_key = (
             app.data_version,
             request_id,
@@ -334,10 +365,11 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
         if app.bom_preview_last_sync_key != Some(sync_key) {
             let rows: Vec<BomPreviewRow> = filtered_parts
                 .iter()
-                .map(|(partno, desc, qty, loc, tags)| BomPreviewRow {
+                .map(|(partno, desc, qty, uom, loc, tags)| BomPreviewRow {
                     partno: partno.clone(),
                     description: desc.clone(),
                     location: loc.clone(),
+                    uom: uom.clone(),
                     quantity: *qty,
                     tags: tags.join(" "),
                 })
@@ -346,7 +378,20 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
             app.bom_preview_last_sync_key = Some(sync_key);
         }
 
+        ui.strong("Include in print (HTML):");
+        ui.horizontal_wrapped(|ui| {
+            let labels = ["Part Number", "Description", "Location", "UOM", "Qty", "Tags"];
+            for (i, label) in labels.iter().enumerate() {
+                let v = app.bom_preview_columns_in_html.get_mut(i).unwrap();
+                if ui.checkbox(v, *label).changed() {
+                    // Toggled
+                }
+            }
+        });
+        ui.add_space(4.0);
+
         ui.strong("Bill Of Materials");
+        ui.label("Drag column headers to reorder; order is reflected in HTML export.");
         ui.add_space(4.0);
         let table_area_height = ui.available_rect_before_wrap().height();
         let mut viewer = BomPreviewViewer;
@@ -355,14 +400,12 @@ pub fn bom_preview_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                 .with_table_row_height(22.0)
                 .with_max_scroll_height(table_area_height.max(100.0)),
         );
-
+        });
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             if ui.button("Print Preview").clicked() {
                 app.trigger_print_preview();
             }
-
         });
-    });
     });
 }

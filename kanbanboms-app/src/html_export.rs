@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::cmp::Ordering;
 use uuid::Uuid;
 
-/// Part tuple: (partno, description, quantity, location, tags)
-pub type PartTuple = (String, String, i32, String, Vec<String>);
+/// Part tuple: (partno, description, quantity, uom, location, tags)
+pub type PartTuple = (String, String, i32, String, String, Vec<String>);
 
 fn compare_part_by_column(
     a: &PartTuple,
@@ -17,9 +17,10 @@ fn compare_part_by_column(
     let ord = match col {
         0 => a.0.cmp(&b.0),
         1 => a.1.cmp(&b.1),
-        2 => a.3.cmp(&b.3),
-        3 => a.2.cmp(&b.2),
-        4 => a.4.join(" ").cmp(&b.4.join(" ")),
+        2 => a.4.cmp(&b.4),   // location
+        3 => a.3.cmp(&b.3),   // uom
+        4 => a.2.cmp(&b.2),   // quantity
+        5 => a.5.join(" ").cmp(&b.5.join(" ")),
         _ => Ordering::Equal,
     };
     if asc {
@@ -51,14 +52,21 @@ fn escape_html(s: &str) -> String {
     out
 }
 
+/// Column indices for BOM table: 0=Part Number, 1=Description, 2=Location, 3=UOM, 4=Qty, 5=Tags.
+const BOM_COL_NAMES: &[&str] = &["Part Number", "Description", "Location", "UOM", "Qty", "Tags"];
+
 /// Generates a self-contained HTML document for print preview.
 /// Mirrors the Django print_request template structure (without accumatica, IDs, barcodes).
 /// `parts` should be in the desired display order (e.g. matching preview data grid sort).
+/// `columns_in_html`: per-column flags; when true, that column is included in the output. PDF ignores this.
+/// `column_order`: display order of columns (indices 0..5); when None, uses default [0,1,2,3,4,5].
 pub fn generate_html_print_preview(
     request: &Request,
     assemblies: &[RequestEntry],
     boms: &HashMap<Uuid, Bom>,
     parts: &[PartTuple],
+    columns_in_html: &[bool; 6],
+    column_order: Option<&[usize]>,
 ) -> String {
     let date = chrono::Local::now().format("%m/%d/%Y").to_string();
 
@@ -86,9 +94,7 @@ h2 { font-size: 1.15rem; }
 .pr-table thead th:nth-child(3) { width: 100px; }
 .pr-table thead th:nth-child(4) { width: 50px; }
 .pr-table tbody tr:nth-child(odd) { background-color: #e3e3e3; }
-.pr-table tr th:nth-child(1), .pr-table tr td:nth-child(1),
-.pr-table tr th:nth-child(3), .pr-table tr td:nth-child(3),
-.pr-table tr th:nth-child(4), .pr-table tr td:nth-child(4) { text-align: center; }
+.pr-table .pr-center { text-align: center; }
 .pr-table td.text span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 100%; }
 .pr-assemblies-table { width: 100%; table-layout: fixed; font-size: 0.8125rem; }
 .pr-assemblies-table th, .pr-assemblies-table td { padding: 2px 4px; line-height: 1.25; }
@@ -179,44 +185,101 @@ h2 { font-size: 1.15rem; }
 <h2 class="mt-2">Bill Of Materials</h2>
 <table class="pr-table printed">
 <colgroup>
-<col style="width: 110px">
-<col>
-<col style="width: 100px">
-<col style="width: 50px">
-</colgroup>
-<thead>
-<tr>
-<th>Part Number</th>
-<th>Description</th>
-<th>Location</th>
-<th>Qty</th>
-</tr>
-</thead>
-<tbody>
 "#);
 
-    for (partno, desc, qty, loc, _tags) in parts {
+    // Ordered list of columns to emit (respects preview column order)
+    let order: Vec<usize> = match column_order {
+        Some(o) if o.len() == 6 => o.to_vec(),
+        _ => (0..6).collect(),
+    };
+
+    let col_widths = ["110px", "auto", "100px", "40px", "50px", "80px"];
+    let center_cols = [true, false, true, true, true, false]; // Part Number, Location, UOM, Qty centered
+    let text_class_cols = [true, true, true, false, false, true]; // Part Number, Description, Location, Tags use .text span
+
+    // Colgroup: only for included columns, in display order
+    for &i in &order {
+        if columns_in_html.get(i).copied().unwrap_or(false) {
+            let w = col_widths.get(i).copied().unwrap_or("auto");
+            html.push_str("<col style=\"width: ");
+            html.push_str(w);
+            html.push_str("\">\n");
+        }
+    }
+
+    html.push_str("</colgroup>\n<thead>\n<tr>\n");
+    for &i in &order {
+        if columns_in_html.get(i).copied().unwrap_or(false) {
+            let cls = if center_cols.get(i).copied().unwrap_or(false) {
+                " class=\"pr-center\""
+            } else {
+                ""
+            };
+            html.push_str("<th");
+            html.push_str(cls);
+            html.push_str(">");
+            html.push_str(BOM_COL_NAMES.get(i).copied().unwrap_or(""));
+            html.push_str("</th>\n");
+        }
+    }
+    html.push_str("</tr>\n</thead>\n<tbody>\n");
+
+    for (partno, desc, qty, uom, loc, tags) in parts {
         let loc_display = if loc.is_empty() { "N/A" } else { loc.as_str() };
+        let uom_display = if uom.is_empty() { "EA" } else { uom.as_str() };
+        let tags_display = tags.join(" ");
         let partno_esc = escape_html(partno);
         let desc_esc = escape_html(desc);
         let loc_esc = escape_html(loc_display);
-        html.push_str("<tr><td class=\"text\" title=\"");
-        html.push_str(&partno_esc);
-        html.push_str("\"><span>");
-        html.push_str(&partno_esc);
-        html.push_str("</span></td><td class=\"text\" title=\"");
-        html.push_str(&desc_esc);
-        html.push_str("\"><span>");
-        html.push_str(&desc_esc);
-        html.push_str("</span></td><td class=\"text\" title=\"");
-        html.push_str(&loc_esc);
-        html.push_str("\"><span>");
-        html.push_str(&loc_esc);
-        html.push_str("</span></td><td title=\"");
-        html.push_str(&qty.to_string());
-        html.push_str("\">");
-        html.push_str(&qty.to_string());
-        html.push_str("</td></tr>\n");
+        let uom_esc = escape_html(uom_display);
+        let tags_esc = escape_html(&tags_display);
+
+        let cell_values: [&str; 6] = [
+            &partno_esc,
+            &desc_esc,
+            &loc_esc,
+            &uom_esc,
+            &qty.to_string(),
+            &tags_esc,
+        ];
+
+        html.push_str("<tr>");
+        for &i in &order {
+            if columns_in_html.get(i).copied().unwrap_or(false) {
+                let val = cell_values.get(i).copied().unwrap_or("");
+                let use_text = text_class_cols.get(i).copied().unwrap_or(false);
+                let center = center_cols.get(i).copied().unwrap_or(false);
+                let mut cls = String::new();
+                if use_text {
+                    cls.push_str("text");
+                }
+                if center {
+                    if !cls.is_empty() {
+                        cls.push(' ');
+                    }
+                    cls.push_str("pr-center");
+                }
+                let cls_attr = if cls.is_empty() {
+                    String::new()
+                } else {
+                    format!(" class=\"{}\"", cls)
+                };
+                html.push_str("<td");
+                html.push_str(&cls_attr);
+                html.push_str(" title=\"");
+                html.push_str(val);
+                html.push_str("\">");
+                if use_text {
+                    html.push_str("<span>");
+                }
+                html.push_str(val);
+                if use_text {
+                    html.push_str("</span>");
+                }
+                html.push_str("</td>");
+            }
+        }
+        html.push_str("</tr>\n");
     }
 
     html.push_str(r#"</tbody>
