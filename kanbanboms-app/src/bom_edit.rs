@@ -27,8 +27,8 @@ pub struct BomEditRow {
 }
 
 /// Get bom_entries for the given bom_id, either from current state or from a specific revision.
-fn bom_entries_for_edit(app: &KanbanBomsApp, bom_id: Uuid) -> Vec<BomEntry> {
-    if let Some(rev) = app.bom_edit_viewing_revision {
+fn bom_entries_for_edit(app: &KanbanBomsApp, bom_id: Uuid, viewing_revision: Option<u32>) -> Vec<BomEntry> {
+    if let Some(rev) = viewing_revision {
         app.bom_revisions
             .get(&bom_id)
             .and_then(|revs| revs.iter().find(|r| r.revision == rev))
@@ -184,6 +184,23 @@ pub struct BomEditViewer {
 }
 
 impl BomEditViewer {
+    /// Resolve part_id from partno when pasting from clipboard (part_id is nil but partno is set).
+    fn resolve_part_id_from_partno(&self, row: &mut BomEditRow) {
+        if row.part_id != Uuid::nil() || row.partno.trim().is_empty() {
+            return;
+        }
+        let partno = row.partno.trim();
+        let matches: Vec<_> = self
+            .boms
+            .iter()
+            .filter(|b| b.partno == partno)
+            .collect();
+        if matches.len() == 1 {
+            row.part_id = matches[0].id;
+            row.description = matches[0].description.clone();
+        }
+    }
+
     fn search_parts(&self, query: &str, exclude_part_ids: &HashSet<Uuid>) -> Vec<&Bom> {
         if query.trim().is_empty() {
             return Vec::new();
@@ -251,8 +268,11 @@ impl RowViewer<BomEditRow> for BomEditViewer {
                         .id(ui.auto_id_with("bom_edit").with(column)),
                 );
 
-                // Show autocomplete when focused and has text
-                if (response.has_focus() || response.gained_focus()) && !query.trim().is_empty() {
+                // Show autocomplete when focused and has text. Defer until at least 2 chars to avoid
+                // popup stealing focus on first keystroke (common egui focus-loss bug).
+                if (response.has_focus() || response.gained_focus())
+                    && query.trim().len() >= 2
+                {
                     ui.memory_mut(|m| m.open_popup(popup_id));
                 }
 
@@ -319,7 +339,9 @@ impl RowViewer<BomEditRow> for BomEditViewer {
                 Some(response)
             }
             4 => Some(ui.add(
-                egui::TextEdit::singleline(&mut row.tags).desired_width(120.0),
+                egui::TextEdit::singleline(&mut row.tags)
+                    .desired_width(120.0)
+                    .id(ui.auto_id_with("bom_tags").with(row.part_id)),
             )),
             5 => Some(ui.checkbox(&mut row.disabled, "")),
             6 => {
@@ -341,11 +363,13 @@ impl RowViewer<BomEditRow> for BomEditViewer {
                 dst.partno = src.partno.clone();
                 dst.part_id = src.part_id;
                 dst.description = src.description.clone();
+                self.resolve_part_id_from_partno(dst);
             }
             1 => {
                 dst.description = src.description.clone();
                 dst.partno = src.partno.clone();
                 dst.part_id = src.part_id;
+                self.resolve_part_id_from_partno(dst);
             }
             2 => dst.quantity = src.quantity,
             3 => dst.uom = src.uom.clone(),
@@ -436,7 +460,7 @@ impl RowViewer<BomEditRow> for BomEditViewer {
     }
 }
 
-pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
+pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, bom_id: Uuid) {
     let avail = ui.available_rect_before_wrap();
     let width = avail.width().min(CENTERED_MAX_WIDTH);
     let left = avail.left() + (avail.width() - width) / 2.0;
@@ -448,11 +472,9 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
             ui.heading("BOM Editor");
             ui.add_space(8.0);
 
-            if let Some(bom_id) = app.selected_bom_for_edit {
-                // Reset viewing revision when switching to a different BOM
-                if app.bom_edit_last_sync_key.map(|(_, id, _, _)| id) != Some(bom_id) {
-                    app.bom_edit_viewing_revision = None;
-                }
+            let viewing_revision = *app.bom_edit_viewing_revisions.entry(bom_id).or_insert(None);
+
+            if app.boms.iter().any(|b| b.id == bom_id) {
                 let bom = match app.boms.iter().find(|b| b.id == bom_id) {
                     Some(b) => b.clone(),
                     None => return,
@@ -471,7 +493,7 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                 ui.horizontal(|ui| {
                     ui.label("Batch quantity:");
                     let r = ui.add_enabled(
-                        app.bom_edit_viewing_revision.is_none(),
+                        viewing_revision.is_none(),
                         egui::DragValue::new(&mut batch_quantity)
                             .range(0..=10000)
                             .speed(0.5),
@@ -490,7 +512,7 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                     .get(&bom_id)
                     .map(|revs| revs.iter().map(|r| r.revision).collect())
                     .unwrap_or_default();
-                let viewing = app.bom_edit_viewing_revision;
+                let viewing = viewing_revision;
                 ui.horizontal(|ui| {
                     ui.label("Revision:");
                     let current_label = "Current (editable)";
@@ -498,34 +520,37 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                         None => current_label.to_string(),
                         Some(r) => format!("Revision {}", r),
                     };
-                    egui::ComboBox::from_id_salt("bom_revision_select")
+                    egui::ComboBox::from_id_salt(("bom_revision_select", bom_id))
                         .selected_text(selected_text)
                         .show_ui(ui, |ui| {
                             if ui.selectable_label(viewing.is_none(), current_label).clicked() {
-                                app.bom_edit_viewing_revision = None;
+                                app.bom_edit_viewing_revisions.insert(bom_id, None);
                             }
                             for &rev in &revisions {
                                 let is_selected = viewing == Some(rev);
                                 if ui.selectable_label(is_selected, format!("Revision {}", rev)).clicked() {
-                                    app.bom_edit_viewing_revision = Some(rev);
+                                    app.bom_edit_viewing_revisions.insert(bom_id, Some(rev));
                                 }
                             }
                         });
                 });
                 ui.add_space(4.0);
 
-                let entries = bom_entries_for_edit(app, bom_id);
-                let sync_key = bom_edit_sync_key(app, bom_id, entries.len(), app.bom_edit_viewing_revision);
-                if app.bom_edit_last_sync_key != Some(sync_key) {
+                let entries = bom_entries_for_edit(app, bom_id, viewing_revision);
+                let sync_key = bom_edit_sync_key(app, bom_id, entries.len(), viewing_revision);
+                if app.bom_edit_last_sync_keys.get(&bom_id) != Some(&sync_key) {
                     let rows = bom_edit_rows_for_table(app, &entries);
-                    app.bom_edit_table.replace(rows);
-                    app.bom_edit_last_sync_key = Some(sync_key);
+                    app.bom_edit_tables
+                        .entry(bom_id)
+                        .or_insert_with(egui_data_table::DataTable::new)
+                        .replace(rows);
+                    app.bom_edit_last_sync_keys.insert(bom_id, sync_key);
                 }
 
-                let is_viewing_revision = app.bom_edit_viewing_revision.is_some();
+                let is_viewing_revision = viewing_revision.is_some();
                 if is_viewing_revision {
                     ui.colored_label(egui::Color32::GRAY, "Viewing old revision (read-only)");
-                    if let Some(rev) = app.bom_edit_viewing_revision {
+                    if let Some(rev) = viewing_revision {
                         if let Some(revision) = app
                             .bom_revisions
                             .get(&bom_id)
@@ -554,9 +579,9 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
 
                 let table_area_height = ui.available_rect_before_wrap().height();
 
+                let table = app.bom_edit_tables.get_mut(&bom_id).unwrap();
                 let boms = app.boms.clone();
-                let existing_part_ids: HashSet<Uuid> = app
-                    .bom_edit_table
+                let existing_part_ids: HashSet<Uuid> = table
                     .iter()
                     .filter(|r| r.part_id != Uuid::nil())
                     .map(|r| r.part_id)
@@ -574,16 +599,23 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                     system_clipboard,
                 };
                 ui.add(
-                    Renderer::new(&mut app.bom_edit_table, &mut viewer)
+                    Renderer::new(table, &mut viewer)
                         .with_table_row_height(22.0)
                         .with_max_scroll_height(table_area_height.max(100.0)),
                 );
 
                 ui.add_space(4.0);
-                ui.horizontal(|ui| {
+                let add_clicked = ui.horizontal(|ui| {
                     let add_enabled = !is_viewing_revision;
-                    if ui.add_enabled(add_enabled, egui::Button::new("Add Component")).clicked() {
-                        app.bom_edit_table.extend(std::iter::once(BomEditRow {
+                    let add_btn = ui.add_enabled(add_enabled, egui::Button::new("Add Component"));
+                    let save_btn = ui.add_enabled(!is_viewing_revision, egui::Button::new("Save"));
+                    (add_btn.clicked(), save_btn.clicked())
+                });
+                if add_clicked.inner.0 {
+                    app.bom_edit_tables
+                        .get_mut(&bom_id)
+                        .unwrap()
+                        .extend(std::iter::once(BomEditRow {
                             part_id: Uuid::nil(),
                             partno: String::new(),
                             description: String::new(),
@@ -593,13 +625,18 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                             disabled: false,
                             expand: false,
                         }));
-                    }
-                    if ui.add_enabled(!is_viewing_revision, egui::Button::new("Save")).clicked() {
-                        let rows: Vec<BomEditRow> = app.bom_edit_table.iter().cloned().collect();
-                        sync_table_to_bom_entries(app, bom_id, &rows);
-                        app.bom_save_revision_modal = Some((bom_id, String::new()));
-                    }
-                });
+                }
+                if add_clicked.inner.1 {
+                    let rows: Vec<BomEditRow> = app
+                        .bom_edit_tables
+                        .get(&bom_id)
+                        .unwrap()
+                        .iter()
+                        .cloned()
+                        .collect();
+                    sync_table_to_bom_entries(app, bom_id, &rows);
+                    app.bom_save_revision_modal = Some((bom_id, String::new()));
+                }
             }
     });
 }

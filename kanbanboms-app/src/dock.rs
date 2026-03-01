@@ -37,8 +37,58 @@ pub enum DockTab {
 }
 
 impl DockTab {
-    pub fn title(&self, app: &KanbanBomsApp) -> String {
+    /// Returns true if the tab has unsaved changes.
+    pub fn is_dirty(&self, app: &KanbanBomsApp) -> bool {
         match self {
+            DockTab::PartMaster => false,
+            DockTab::PartEdit(tab_id) => {
+                let state = match app.part_edit_states.get(tab_id) {
+                    Some(s) => s,
+                    None => return false,
+                };
+                let bom_id = if app.boms.iter().any(|b| b.id == *tab_id) {
+                    *tab_id
+                } else {
+                    app.part_edit_new_to_bom.get(tab_id).copied().unwrap_or(*tab_id)
+                };
+                let is_new = !app.boms.iter().any(|b| b.id == *tab_id)
+                    && !app.part_edit_new_to_bom.contains_key(tab_id);
+                if is_new {
+                    !state.partno.trim().is_empty()
+                        || !state.description.trim().is_empty()
+                        || state
+                            .custom_fields
+                            .iter()
+                            .any(|(k, v)| !k.trim().is_empty() || !v.trim().is_empty())
+                } else if let Some(bom) = app.boms.iter().find(|b| b.id == bom_id) {
+                    let current_cf: std::collections::HashMap<String, String> = state
+                        .custom_fields
+                        .iter()
+                        .filter(|(k, _)| !k.trim().is_empty())
+                        .map(|(k, v)| (k.trim().to_string(), v.clone()))
+                        .collect();
+                    state.partno.trim() != bom.partno
+                        || state.description.trim() != bom.description
+                        || current_cf != bom.custom_fields
+                } else {
+                    false
+                }
+            }
+            DockTab::BomEdit(bom_id) => {
+                if app.bom_edit_viewing_revisions.get(bom_id).copied().flatten().is_some() {
+                    return false;
+                }
+                app.bom_edit_tables
+                    .get(bom_id)
+                    .map(|t| t.is_dirty())
+                    .unwrap_or(false)
+            }
+            DockTab::Request(_) | DockTab::UsageReport(_) => false,
+        }
+    }
+
+    pub fn title(&self, app: &KanbanBomsApp) -> String {
+        let base = match self {
             DockTab::PartMaster => "Part Master".to_string(),
             DockTab::PartEdit(tab_id) => {
                 let bom_id = if app.boms.iter().any(|b| b.id == *tab_id) {
@@ -77,6 +127,11 @@ impl DockTab {
                 .find(|b| b.id == *part_id)
                 .map(|b| format!("Usage: {}", b.partno))
                 .unwrap_or_else(|| "Usage Report".to_string()),
+        };
+        if self.is_dirty(app) {
+            format!("{} *", base)
+        } else {
+            base
         }
     }
 }
@@ -108,10 +163,7 @@ impl TabViewer for AppTabViewer<'_> {
                 crate::part_master::part_edit_ui(self.app, ui, *tab_id);
             }
             DockTab::BomEdit(bom_id) => {
-                let prev = self.app.selected_bom_for_edit;
-                self.app.selected_bom_for_edit = Some(*bom_id);
-                bom_edit_ui(self.app, ui);
-                self.app.selected_bom_for_edit = prev;
+                bom_edit_ui(self.app, ui, *bom_id);
             }
             DockTab::Request(req_id) => {
                 let prev_req = self.app.current_request_id;

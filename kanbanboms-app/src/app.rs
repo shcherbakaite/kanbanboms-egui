@@ -160,21 +160,21 @@ pub struct KanbanBomsApp {
     /// Part Master: last sync key (boms_version, tab, filter, boms_len, custom_sig, categories_len) to avoid replacing rows every frame
     #[serde(skip)]
     pub part_master_last_sync_key: Option<(u64, usize, String, usize, String, usize)>,
-    /// BOM Edit: data table (egui-data-table)
+    /// BOM Edit: per-bom_id data tables (allows multiple Edit BOM tabs open)
     #[serde(skip)]
-    pub bom_edit_table: egui_data_table::DataTable<BomEditRow>,
-    /// BOM Edit: last sync key (data_version, bom_id, entries_count, viewing_revision) to avoid replacing rows every frame
+    pub bom_edit_tables: std::collections::HashMap<Uuid, egui_data_table::DataTable<BomEditRow>>,
+    /// BOM Edit: per-bom_id last sync key (data_version, bom_id, entries_count, viewing_revision) to avoid replacing rows every frame
     #[serde(skip)]
-    pub bom_edit_last_sync_key: Option<(u64, Uuid, usize, Option<u32>)>,
+    pub bom_edit_last_sync_keys: std::collections::HashMap<Uuid, (u64, Uuid, usize, Option<u32>)>,
     /// BOM revisions per bom_id (newest first)
     #[serde(default)]
     pub bom_revisions: HashMap<Uuid, Vec<BomRevision>>,
     /// Next revision number per bom_id
     #[serde(default)]
     pub bom_revision_next: HashMap<Uuid, u32>,
-    /// BOM Edit: which revision is being viewed (None = current/editable)
+    /// BOM Edit: per-bom_id which revision is being viewed (None = current/editable)
     #[serde(skip)]
-    pub bom_edit_viewing_revision: Option<u32>,
+    pub bom_edit_viewing_revisions: std::collections::HashMap<Uuid, Option<u32>>,
     /// BOM Save: modal for revision comment. Some(bom_id, comment) = modal open.
     #[serde(skip)]
     pub bom_save_revision_modal: Option<(Uuid, String)>,
@@ -293,11 +293,11 @@ impl Default for KanbanBomsApp {
             part_master_filter: String::new(),
             part_master_table: egui_data_table::DataTable::new(),
             part_master_last_sync_key: None,
-            bom_edit_table: egui_data_table::DataTable::new(),
-            bom_edit_last_sync_key: None,
+            bom_edit_tables: std::collections::HashMap::new(),
+            bom_edit_last_sync_keys: std::collections::HashMap::new(),
             bom_revisions: HashMap::new(),
             bom_revision_next: HashMap::new(),
-            bom_edit_viewing_revision: None,
+            bom_edit_viewing_revisions: std::collections::HashMap::new(),
             bom_save_revision_modal: None,
             bom_revert_revision_modal: None,
             pending_open_bom: None,
@@ -931,9 +931,14 @@ impl eframe::App for KanbanBomsApp {
                 .show(ctx, |ui| {
                     ui.heading("Kanban BOMs v2.0");
                     ui.add_space(8.0);
-                    ui.label("A BOM manager and a partmaster killer from the depths of production hell.");
+                    ui.label("A BOM manager and a part master killer from the depths of production hell.");
                     ui.add_space(8.0);
                     ui.label("Features:");
+                    ui.label("• Built-in part master as an actual database (PocketBase)");
+                    ui.label("• Tagging BOM entries for filtering out parts during kitting");
+                    ui.label("• Copy/paste between BOMs that actually works");
+                    ui.label("• Dock anything, anywhere. Open as many windows as you like.");
+                    ui.label("• Part usage reports. Again, just copy and paste to your favorite Excel clone");
                     ui.label("• Part master with categories, locations, and custom fields");
                     ui.label("• BOM editing with hierarchical assemblies, tags, and revision history");
                     ui.label("• Kitting requests with aggregated part lists");
@@ -1085,7 +1090,11 @@ impl eframe::App for KanbanBomsApp {
                         },
                     );
                 *self.bom_revision_next.get_mut(&bom_id).unwrap() = rev + 1;
-                self.bom_edit_viewing_revision = None;
+                self.bom_edit_viewing_revisions.remove(&bom_id);
+                self.bom_edit_last_sync_keys.remove(&bom_id);
+                if let Some(table) = self.bom_edit_tables.get_mut(&bom_id) {
+                    table.clear_dirty_flag();
+                }
                 self.mark_boms_dirty();
             }
         }
@@ -1142,8 +1151,8 @@ impl eframe::App for KanbanBomsApp {
                         },
                     );
                 *self.bom_revision_next.get_mut(&bom_id).unwrap() = new_rev + 1;
-                self.bom_edit_viewing_revision = None;
-                self.bom_edit_last_sync_key = None;
+                self.bom_edit_viewing_revisions.remove(&bom_id);
+                self.bom_edit_last_sync_keys.remove(&bom_id);
                 crate::models::recompute_bom_entry_counts(&mut self.boms, &self.bom_entries);
                 self.mark_boms_dirty();
             }

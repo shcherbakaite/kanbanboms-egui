@@ -391,7 +391,11 @@ pub fn part_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, tab_id: Uuid) {
         egui::pos2(left, avail.top()),
         egui::vec2(width, avail.height()),
     );
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .id(("part_edit", tab_id)),
+        |ui| {
     // Resolve bom_id: existing part = tab_id, new part after save = part_edit_new_to_bom[tab_id]
     let bom_id = if app.boms.iter().any(|b| b.id == tab_id) {
         tab_id
@@ -426,14 +430,16 @@ pub fn part_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, tab_id: Uuid) {
     ui.add(
         egui::TextEdit::singleline(&mut state.partno)
             .desired_width(280.0)
-            .hint_text("e.g. 20002-GH-002"),
+            .hint_text("e.g. 20002-GH-002")
+            .id(ui.make_persistent_id((tab_id, "partno"))),
     );
     ui.add_space(4.0);
     ui.label("Description:");
     ui.add(
         egui::TextEdit::singleline(&mut state.description)
             .desired_width(280.0)
-            .hint_text("Part description"),
+            .hint_text("Part description")
+            .id(ui.make_persistent_id((tab_id, "description"))),
     );
     ui.add_space(8.0);
 
@@ -454,12 +460,14 @@ pub fn part_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, tab_id: Uuid) {
             ui.add(
                 egui::TextEdit::singleline(k)
                     .desired_width(120.0)
-                    .hint_text("Field name"),
+                    .hint_text("Field name")
+                    .id(ui.make_persistent_id((tab_id, "cf_key", i))),
             );
             ui.add(
                 egui::TextEdit::singleline(v)
                     .desired_width(180.0)
-                    .hint_text("Value"),
+                    .hint_text("Value")
+                    .id(ui.make_persistent_id((tab_id, "cf_val", i))),
             );
             if ui.small_button("✕").clicked() {
                 to_remove = Some(i);
