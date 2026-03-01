@@ -377,6 +377,7 @@ impl RowViewer<BomEditRow> for BomEditViewer {
         let none = Modifiers::NONE;
         let ctrl = Modifiers::CTRL;
         let shift = Modifiers::SHIFT;
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
         type MD = MoveDirection;
 
         if context.cursor.is_editing() {
@@ -397,6 +398,8 @@ impl RowViewer<BomEditRow> for BomEditViewer {
             (KeyboardShortcut::new(none, Key::Enter), UiAction::SelectionStartEditing),
             (KeyboardShortcut::new(ctrl, Key::C), UiAction::CopySelection),
             (KeyboardShortcut::new(ctrl, Key::X), UiAction::CutSelection),
+            (KeyboardShortcut::new(ctrl_shift, Key::V), UiAction::PasteInsert),
+            (KeyboardShortcut::new(ctrl, Key::V), UiAction::PasteInPlace),
             (KeyboardShortcut::new(ctrl, Key::V), UiAction::PasteInsert),
             (KeyboardShortcut::new(ctrl, Key::Z), UiAction::Undo),
             (KeyboardShortcut::new(ctrl, Key::Y), UiAction::Redo),
