@@ -4,12 +4,27 @@
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
     env_logger::init();
+    let args: Vec<String> = std::env::args().collect();
+    let import_path = args
+        .windows(2)
+        .find(|w| w[0] == "--import" || w[0] == "-i")
+        .and_then(|w| w.get(1).cloned());
     let mut native_options = eframe::NativeOptions::default();
     native_options.viewport = egui::ViewportBuilder::default().with_inner_size([900.0, 600.0]);
     eframe::run_native(
         "Kanban BOMs",
         native_options,
-        Box::new(|cc| Ok(Box::new(kanbanboms_app::KanbanBomsApp::new(cc)))),
+        Box::new(move |cc| {
+            let mut app = kanbanboms_app::KanbanBomsApp::new(cc);
+            if let Some(ref path) = import_path {
+                if let Err(e) = app.load_json_file(path) {
+                    log::error!("Failed to import JSON from {}: {}", path, e);
+                    app.status_flash = Some((format!("Import failed: {}", e), true));
+                    app.status_flash_at = None;
+                }
+            }
+            Ok(Box::new(app))
+        }),
     )
 }
 

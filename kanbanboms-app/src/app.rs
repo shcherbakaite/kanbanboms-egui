@@ -307,7 +307,7 @@ impl Default for KanbanBomsApp {
             usage_report_last_sync_key: None,
             dock_state: None,
             request_tab_state: RequestTabState::default(),
-            api_base_url: String::new(),
+            api_base_url: "http://kanbanboms:8090/api/".to_string(),
             backend_modal_open: false,
             backend_error: None,
             status_flash: None,
@@ -395,6 +395,16 @@ impl KanbanBomsApp {
                 let _ = tx.send(result);
             });
         }
+    }
+
+    /// Load data from a JSON file (StoredData format). Native only.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_json_file(&mut self, path: &str) -> Result<(), String> {
+        let json = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let data: StoredData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        self.apply_loaded_data(data);
+        self.set_status_flash("Loaded from JSON file", false);
+        Ok(())
     }
 
     fn apply_loaded_data(&mut self, data: StoredData) {

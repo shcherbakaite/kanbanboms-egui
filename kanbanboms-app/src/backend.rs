@@ -367,6 +367,11 @@ impl PocketBaseBackend {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
+            if status == reqwest::StatusCode::BAD_REQUEST
+                && text.contains("validation_not_unique")
+            {
+                return Ok(()); // Record already exists (e.g. duplicate uuid)
+            }
             return Err(BackendError::Parse(format!(
                 "{} {}: {}",
                 status,
@@ -388,6 +393,11 @@ impl PocketBaseBackend {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().unwrap_or_default();
+            if status == reqwest::StatusCode::BAD_REQUEST
+                && text.contains("validation_not_unique")
+            {
+                return Ok(()); // Record already exists (e.g. duplicate uuid)
+            }
             return Err(BackendError::Parse(format!(
                 "{} {}: {}",
                 status,
