@@ -41,26 +41,40 @@ def main():
     else:
         part_master_categories = ["All", "EA", "ME", "SD", "TR", "Others"]
 
+    # Filter out empty category names (PocketBase requires non-empty)
+    part_master_categories = [c for c in part_master_categories if c and str(c).strip()]
+    if not part_master_categories:
+        part_master_categories = ["All", "EA", "ME", "SD", "TR", "Others"]
+    if "All" not in part_master_categories:
+        part_master_categories.insert(0, "All")
+
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    # id -> partno for all boms
+    # id -> partno for all boms (skip empty partno to avoid PocketBase 400 "missing required value")
     cur.execute("SELECT id, partno, description, batch_quantity FROM kanbanbomsapp_bom")
     id_to_partno: dict[int, str] = {}
     boms_out = []
+    skipped_empty_partno = 0
     for row in cur.fetchall():
-        id_to_partno[row["id"]] = row["partno"]
-        uid = partno_to_uuid(row["partno"], existing_partno_to_uuid)
+        partno = (row["partno"] or "").strip()
+        if not partno:
+            skipped_empty_partno += 1
+            continue
+        id_to_partno[row["id"]] = partno
+        uid = partno_to_uuid(partno, existing_partno_to_uuid)
         boms_out.append({
             "id": uid,
-            "partno": row["partno"],
-            "description": row["description"] or "",
-            "batch_quantity": row["batch_quantity"],
+            "partno": partno,
+            "description": (row["description"] or "").strip(),
+            "batch_quantity": int(row["batch_quantity"]) if row["batch_quantity"] is not None else 0,
             "location": "",
             "custom_fields": {},
             "bom_entry_count": 0,  # computed below
         })
+    if skipped_empty_partno:
+        print(f"Skipped {skipped_empty_partno} boms with empty partno")
 
     # Compute bom_entry_count
     cur.execute("""
@@ -85,10 +99,11 @@ def main():
         part_partno = id_to_partno.get(row["part_id"])
         if bom_partno is None or part_partno is None:
             continue  # skip orphaned entries
+        qty = int(row["quantity"]) if row["quantity"] is not None else 1
         bom_entries_out.append({
             "bom_id": partno_to_uuid(bom_partno, existing_partno_to_uuid),
             "part_id": partno_to_uuid(part_partno, existing_partno_to_uuid),
-            "quantity": row["quantity"],
+            "quantity": qty,
             "uom": (row["uom"] or "EA").strip() or "EA",
             "disabled": bool(row["disabled"]),
             "expand": bool(row["expand"]),

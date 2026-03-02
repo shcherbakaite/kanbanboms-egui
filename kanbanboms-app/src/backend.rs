@@ -367,7 +367,12 @@ impl PocketBaseBackend {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(BackendError::Parse(format!("{}: {}", status, text)));
+            return Err(BackendError::Parse(format!(
+                "{} {}: {}",
+                status,
+                collection,
+                text
+            )));
         }
         Ok(())
     }
@@ -383,7 +388,12 @@ impl PocketBaseBackend {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().unwrap_or_default();
-            return Err(BackendError::Parse(format!("{}: {}", status, text)));
+            return Err(BackendError::Parse(format!(
+                "{} {}: {}",
+                status,
+                collection,
+                text
+            )));
         }
         Ok(())
     }
@@ -616,6 +626,9 @@ impl PocketBaseBackend {
             .collect();
 
         for b in &data.boms {
+            if b.partno.trim().is_empty() {
+                continue; // Skip: PocketBase requires non-empty partno
+            }
             let location = b.custom_fields.get("Location").cloned().unwrap_or_default();
             let pb_new = PbBom {
                 id: None,
@@ -691,6 +704,9 @@ impl PocketBaseBackend {
         }
 
         for (i, name) in data.part_master_categories.iter().enumerate() {
+            if name.trim().is_empty() {
+                continue; // Skip: PocketBase requires non-empty name
+            }
             let pb = PbPartMasterCategory {
                 id: None,
                 name: name.clone(),
@@ -798,6 +814,9 @@ impl PocketBaseBackend {
             .collect();
 
         for b in &data.boms {
+            if b.partno.trim().is_empty() {
+                continue; // Skip: PocketBase requires non-empty partno
+            }
             let location = b.custom_fields.get("Location").cloned().unwrap_or_default();
             let pb_new = PbBom {
                 id: None,
@@ -873,6 +892,9 @@ impl PocketBaseBackend {
         }
 
         for (i, name) in data.part_master_categories.iter().enumerate() {
+            if name.trim().is_empty() {
+                continue; // Skip: PocketBase requires non-empty name
+            }
             let pb = PbPartMasterCategory {
                 id: None,
                 name: name.clone(),
