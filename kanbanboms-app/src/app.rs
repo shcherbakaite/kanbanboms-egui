@@ -36,7 +36,7 @@ static BG_GRAPHIC: &str = r"
 
 static HELPFUL_ADVICE: &[&str] = &[
     "Add assemblies to your request by right-clicking them in Part Master",
-    "Ctrl+Shift+I opens the Import dialog to paste CSV or JSON data. (Secret)",
+    "Ctrl+Shift+I opens the Import dialog to paste or upload CSV/JSON. (Secret)",
     "Use the Backend button to configure PocketBase for cloud sync.",
     "Part Master shows all parts; filter by category tabs or search.",
     "Ctrl+Z undoes edits in text fields. Save BOM revisions to preserve history.",
@@ -58,7 +58,7 @@ static HELPFUL_ADVICE: &[&str] = &[
     "Tags: label BOM lines (e.g. hardware, electronic). Toggle tag visibility in Preview to filter the kitting list.",
     "Preview tab shows the aggregated kitting list. Export to CSV, HTML, or PDF.",
     "A part with BOM entries is an assembly. Add it to request to get all its parts.",
-    "Ctrl+Shift+I: paste JSON or CSV. Data merges with existing parts by part number.",
+    "Ctrl+Shift+I: paste or upload JSON/CSV. Data merges with existing parts by part number.",
     "Configure PocketBase URL in Backend to sync data across devices.",
     "Toggle Dark mode in the top bar for reduced eye strain and hair loss.",
     "Filter Part Master or BOM Edit by typing part number or description.",
@@ -734,6 +734,80 @@ impl KanbanBomsApp {
         recompute_bom_entry_counts(&mut self.boms, &self.bom_entries);
         self.mark_dirty();
     }
+
+    #[cfg(target_arch = "wasm32")]
+    fn consume_pending_import_file(&mut self) {
+        use std::sync::Mutex;
+        static PENDING: once_cell::sync::Lazy<Mutex<Option<String>>> =
+            once_cell::sync::Lazy::new(|| Mutex::new(None));
+        if let Ok(mut guard) = PENDING.lock() {
+            if let Some(content) = guard.take() {
+                self.import_text = content;
+                self.import_error = None;
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn trigger_import_file_picker(&self) {
+        use std::sync::Mutex;
+        use wasm_bindgen::JsCast;
+        static PENDING: once_cell::sync::Lazy<Mutex<Option<String>>> =
+            once_cell::sync::Lazy::new(|| Mutex::new(None));
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let window = web_sys::window().expect("No window");
+            let document = window.document().expect("No document");
+            let input = document
+                .create_element("input")
+                .expect("create input")
+                .dyn_into::<web_sys::HtmlInputElement>()
+                .expect("HtmlInputElement");
+            input.set_attribute("type", "file").expect("set type");
+            input.set_attribute("accept", ".json,.csv,application/json,text/csv").expect("set accept");
+            input.set_attribute("style", "display:none").expect("set style");
+            input.set_id("kanbanboms-import-file-input");
+            document.body().expect("body").append_child(&input).expect("append");
+            let onchange = wasm_bindgen::closure::Closure::wrap(Box::new(move |_e: web_sys::Event| {
+                let target = _e.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok());
+                if let Some(inp) = target {
+                    if let Some(files) = inp.files() {
+                        if let Some(file) = files.get(0) {
+                            let reader = web_sys::FileReader::new().expect("FileReader");
+                            let reader_clone = reader.clone();
+                            let onload = wasm_bindgen::closure::Closure::wrap(Box::new(move |_e: web_sys::Event| {
+                                let target = _e.target().and_then(|t| t.dyn_into::<web_sys::FileReader>().ok());
+                                if let Some(r) = target {
+                                    if let Ok(result) = r.result() {
+                                        if let Some(text) = result.dyn_ref::<js_sys::JsString>() {
+                                            if let Ok(mut guard) = PENDING.lock() {
+                                                *guard = Some(text.as_string().unwrap_or_default());
+                                            }
+                                        }
+                                    }
+                                }
+                            }) as Box<dyn FnMut(_)>);
+                            reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+                            onload.forget();
+                            let _ = reader_clone.read_as_text(&file);
+                        }
+                    }
+                    let _ = inp.set_value("");
+                }
+            }) as Box<dyn FnMut(_)>);
+            input.set_onchange(Some(onchange.as_ref().unchecked_ref()));
+            onchange.forget();
+        });
+        if let Some(window) = web_sys::window() {
+            if let Some(document) = window.document() {
+                if let Some(input) = document.get_element_by_id("kanbanboms-import-file-input") {
+                    if let Some(html_el) = input.dyn_ref::<web_sys::HtmlElement>() {
+                        let _ = html_el.click();
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Opens HTML content in the default browser (native) or a new tab (WASM).
@@ -964,12 +1038,36 @@ impl eframe::App for KanbanBomsApp {
         }
 
         if self.import_modal_open {
+            #[cfg(target_arch = "wasm32")]
+            self.consume_pending_import_file();
             egui::Window::new("Import Data")
                 .collapsible(false)
                 .resizable(true)
                 .default_size([500.0, 450.0])
                 .show(ctx, |ui| {
-                    ui.label("Paste CSV or JSON data:");
+                    ui.label("Paste CSV or JSON data, or upload a file:");
+                    ui.horizontal(|ui| {
+                        if ui.button("Upload JSON/CSV file…").clicked() {
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .add_filter("JSON or CSV", &["json", "csv"])
+                                    .pick_file()
+                                {
+                                    if let Ok(content) = std::fs::read_to_string(&path) {
+                                        self.import_text = content;
+                                        self.import_error = None;
+                                    } else {
+                                        self.import_error = Some("Failed to read file".to_string());
+                                    }
+                                }
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                self.trigger_import_file_picker();
+                            }
+                        }
+                    });
                     egui::ScrollArea::vertical()
                         .max_height(350.0)
                         .show(ui, |ui| {
