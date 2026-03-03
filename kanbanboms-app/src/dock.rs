@@ -1,6 +1,7 @@
 //! egui_dock integration: Part Master (fixed), BOM Editor (per-part), Request (per-request with Edit/Preview mode).
 
 use crate::app::KanbanBomsApp;
+use crate::bom_diff::bom_diff_ui;
 use crate::bom_edit::bom_edit_ui;
 use crate::bom_preview::bom_preview_ui;
 use crate::part_master::part_master_ui;
@@ -34,6 +35,8 @@ pub enum DockTab {
     PartEdit(Uuid),
     /// Usage report: lists all BOMs where a part (part_id) is used.
     UsageReport(Uuid),
+    /// BOM Diff: compare two revisions of a BOM (bom_id).
+    BomDiff(Uuid),
 }
 
 impl DockTab {
@@ -83,7 +86,7 @@ impl DockTab {
                     .map(|t| t.is_dirty())
                     .unwrap_or(false)
             }
-            DockTab::Request | DockTab::UsageReport(_) => false,
+            DockTab::Request | DockTab::UsageReport(_) | DockTab::BomDiff(_) => false,
         }
     }
 
@@ -122,6 +125,12 @@ impl DockTab {
                 .find(|b| b.id == *part_id)
                 .map(|b| format!("Usage: {}", b.partno))
                 .unwrap_or_else(|| "Usage Report".to_string()),
+            DockTab::BomDiff(bom_id) => app
+                .boms
+                .iter()
+                .find(|b| b.id == *bom_id)
+                .map(|b| format!("Diff: {}", b.partno))
+                .unwrap_or_else(|| "BOM Diff".to_string()),
         };
         if self.is_dirty(app) {
             format!("{} *", base)
@@ -191,6 +200,9 @@ impl TabViewer for AppTabViewer<'_> {
             DockTab::UsageReport(part_id) => {
                 crate::part_master::usage_report_ui(self.app, ui, *part_id);
             }
+            DockTab::BomDiff(bom_id) => {
+                bom_diff_ui(self.app, ui, *bom_id);
+            }
         }
     }
 
@@ -245,6 +257,14 @@ pub fn ensure_dock_tabs(dock_state: &mut DockState<DockTab>, app: &mut KanbanBom
         let has_report = surface.tabs().any(|t| matches!(t, DockTab::UsageReport(id) if *id == part_id));
         if !has_report {
             surface.push_to_first_leaf(DockTab::UsageReport(part_id));
+        }
+    }
+
+    // Open BOM Diff tab when "Diff Tool" is clicked
+    if let Some(bom_id) = app.pending_open_bom_diff.take() {
+        let has_diff = surface.tabs().any(|t| matches!(t, DockTab::BomDiff(id) if *id == bom_id));
+        if !has_diff {
+            surface.push_to_first_leaf(DockTab::BomDiff(bom_id));
         }
     }
 

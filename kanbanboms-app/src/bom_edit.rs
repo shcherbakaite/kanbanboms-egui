@@ -27,7 +27,7 @@ pub struct BomEditRow {
 }
 
 /// Get bom_entries for the given bom_id, either from current state or from a specific revision.
-fn bom_entries_for_edit(app: &KanbanBomsApp, bom_id: Uuid, viewing_revision: Option<u32>) -> Vec<BomEntry> {
+pub(crate) fn bom_entries_for_edit(app: &KanbanBomsApp, bom_id: Uuid, viewing_revision: Option<u32>) -> Vec<BomEntry> {
     if let Some(rev) = viewing_revision {
         app.bom_revisions
             .get(&bom_id)
@@ -469,6 +469,7 @@ impl RowViewer<BomEditRow> for BomEditViewer {
         vec![
             (Cow::Borrowed("Edit part"), format!("edit_part:{}", pid)),
             (Cow::Borrowed("Edit BOM"), format!("edit_bom:{}", pid)),
+            (Cow::Borrowed("Diff Tool"), format!("diff_tool:{}", pid)),
             (Cow::Borrowed("Usage report"), format!("usage_report:{}", pid)),
         ]
     }
@@ -629,6 +630,7 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, bom_id: Uuid) {
                         match action {
                             "edit_part" => app.part_master_edit_part = Some(Some(pid)),
                             "edit_bom" => app.pending_open_bom = Some(pid),
+                            "diff_tool" => app.pending_open_bom_diff = Some(pid),
                             "usage_report" => app.part_master_usage_report = Some(pid),
                             _ => {}
                         }
@@ -640,7 +642,8 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, bom_id: Uuid) {
                     let add_enabled = !is_viewing_revision;
                     let add_btn = ui.add_enabled(add_enabled, egui::Button::new("Add Component"));
                     let save_btn = ui.add_enabled(!is_viewing_revision, egui::Button::new("Save"));
-                    (add_btn.clicked(), save_btn.clicked())
+                    let diff_btn = ui.button("Diff Tool");
+                    (add_btn.clicked(), save_btn.clicked(), diff_btn.clicked())
                 });
                 if add_clicked.inner.0 {
                     app.bom_edit_tables
@@ -667,6 +670,9 @@ pub fn bom_edit_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui, bom_id: Uuid) {
                         .collect();
                     sync_table_to_bom_entries(app, bom_id, &rows);
                     app.bom_save_revision_modal = Some((bom_id, String::new()));
+                }
+                if add_clicked.inner.2 {
+                    app.pending_open_bom_diff = Some(bom_id);
                 }
             }
     });

@@ -333,12 +333,16 @@ impl RowViewer<PartMasterRow> for PartMasterViewer {
 
     fn custom_context_menu_items(&self, row: &PartMasterRow) -> Vec<(Cow<'_, str>, String)> {
         let pid = row.part_id.to_string();
-        vec![
+        let mut items = vec![
             (Cow::Borrowed("Add to request"), format!("add_to_request:{}", pid)),
             (Cow::Borrowed("Edit part"), format!("edit_part:{}", pid)),
             (Cow::Borrowed("Edit BOM"), format!("edit_bom:{}", pid)),
             (Cow::Borrowed("Usage report"), format!("usage_report:{}", pid)),
-        ]
+        ];
+        if row.has_bom {
+            items.push((Cow::Borrowed("Diff Tool"), format!("diff_tool:{}", pid)));
+        }
+        items
     }
 
     fn custom_action_sink(&mut self) -> Option<&mut Option<(usize, String)>> {
@@ -978,6 +982,9 @@ pub fn part_master_ui(app: &mut KanbanBomsApp, ui: &mut egui::Ui) {
                             }
                             "edit_bom" => {
                                 app.pending_open_bom = Some(pid);
+                            }
+                            "diff_tool" => {
+                                app.pending_open_bom_diff = Some(pid);
                             }
                             "usage_report" => {
                                 app.part_master_usage_report = Some(pid);

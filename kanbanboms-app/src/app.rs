@@ -185,9 +185,24 @@ pub struct KanbanBomsApp {
     /// When Part Master "Edit BOM" is clicked, set this; dock will open a BOM Edit tab and clear it.
     #[serde(skip)]
     pub pending_open_bom: Option<Uuid>,
+    /// When "Diff Tool" is clicked, set this; dock will open a BOM Diff tab.
+    #[serde(skip)]
+    pub pending_open_bom_diff: Option<Uuid>,
     /// When Part Master "Usage report" is clicked, set this; dock will open a Usage Report tab.
     #[serde(skip)]
     pub part_master_usage_report: Option<Uuid>,
+    /// BOM Diff: per-bom_id selected revision A (None = Current)
+    #[serde(skip)]
+    pub bom_diff_revision_a: std::collections::HashMap<Uuid, Option<u32>>,
+    /// BOM Diff: per-bom_id selected revision B (None = Current)
+    #[serde(skip)]
+    pub bom_diff_revision_b: std::collections::HashMap<Uuid, Option<u32>>,
+    /// BOM Diff: per-bom_id data tables
+    #[serde(skip)]
+    pub bom_diff_tables: std::collections::HashMap<Uuid, egui_data_table::DataTable<crate::bom_diff::BomDiffRow>>,
+    /// BOM Diff: per-bom_id last sync key
+    #[serde(skip)]
+    pub bom_diff_last_sync_keys: std::collections::HashMap<Uuid, (u64, Uuid, Option<u32>, Option<u32>, usize)>,
     /// Usage Report: data table (egui-data-table)
     #[serde(skip)]
     pub usage_report_table: egui_data_table::DataTable<UsageReportRow>,
@@ -302,6 +317,11 @@ impl Default for KanbanBomsApp {
             bom_save_revision_modal: None,
             bom_revert_revision_modal: None,
             pending_open_bom: None,
+            pending_open_bom_diff: None,
+            bom_diff_revision_a: std::collections::HashMap::new(),
+            bom_diff_revision_b: std::collections::HashMap::new(),
+            bom_diff_tables: std::collections::HashMap::new(),
+            bom_diff_last_sync_keys: std::collections::HashMap::new(),
             part_master_usage_report: None,
             usage_report_table: egui_data_table::DataTable::new(),
             usage_report_last_sync_key: None,

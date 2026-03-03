@@ -547,8 +547,11 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
                     let mut n_sep_menu = 0;
                     let mut draw_sep = false;
 
+                    // When !selected we push CcSetSelection above, so we'll have a selection after this frame.
+                    // Show Copy when we have or will have a selection (always true when context menu is open).
+                    let show_copy = true;
                     [
-                        Some((selected, "🖻", "Selection: Copy", UiAction::CopySelection)),
+                        Some((show_copy, "🖻", "Selection: Copy", UiAction::CopySelection)),
                         Some((selected, "🖻", "Selection: Cut", UiAction::CutSelection)),
                         Some((selected, "🗙", "Selection: Clear", UiAction::DeleteSelection)),
                         Some((

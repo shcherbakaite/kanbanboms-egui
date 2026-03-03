@@ -1,5 +1,6 @@
 mod app;
 mod backend;
+mod bom_diff;
 mod bom_edit;
 mod dock;
 mod bom_preview;
