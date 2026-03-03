@@ -3,7 +3,7 @@ use crate::bom_search::search_boms;
 use crate::models::{Bom, BomEntry, UOM_OPTIONS};
 use egui::{Key, KeyboardShortcut, Modifiers};
 use egui_data_table::viewer::{
-    DecodeErrorBehavior, MoveDirection, RowCodec, UiActionContext,
+    DecodeErrorBehavior, MoveDirection, RowCodec, TableColumnConfig, UiActionContext,
 };
 use egui_data_table::{Renderer, RowViewer, UiAction};
 use std::borrow::Cow;
@@ -232,6 +232,19 @@ impl RowViewer<BomEditRow> for BomEditViewer {
         }
     }
 
+    fn column_render_config(&mut self, column: usize) -> TableColumnConfig {
+        match column {
+            0 => TableColumnConfig::initial(120.0).resizable(true),  // Part Number
+            1 => TableColumnConfig::remainder().resizable(true),     // Description - take remaining space
+            2 => TableColumnConfig::initial(50.0).resizable(true),   // Qty
+            3 => TableColumnConfig::initial(60.0).resizable(true),  // UOM
+            4 => TableColumnConfig::initial(100.0).resizable(true), // Tags
+            5 => TableColumnConfig::initial(60.0).resizable(true),  // Disabled
+            6 => TableColumnConfig::initial(60.0).resizable(true),  // Expand
+            _ => TableColumnConfig::auto().resizable(true),
+        }
+    }
+
     fn try_create_codec(&mut self, _is_encoding: bool) -> Option<impl RowCodec<BomEditRow>> {
         Some(BomEditCodec)
     }
@@ -449,6 +462,7 @@ impl RowViewer<BomEditRow> for BomEditViewer {
             table_row_height: Some(22.0),
             max_undo_history: 50,
             max_scroll_height: None,
+            read_only: false,
         }
     }
 

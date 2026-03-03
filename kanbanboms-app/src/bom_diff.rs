@@ -327,9 +327,9 @@ impl RowViewer<BomDiffRow> for BomDiffViewer {
                 let text = row.diff_display();
                 let color = row.diff_value().map(|d| {
                     if d > 0 {
-                        egui::Color32::DARK_GREEN
+                        egui::Color32::GREEN
                     } else if d < 0 {
-                        egui::Color32::DARK_RED
+                        egui::Color32::RED
                     } else {
                         egui::Color32::GRAY
                     }
@@ -423,6 +423,7 @@ impl RowViewer<BomDiffRow> for BomDiffViewer {
             table_row_height: Some(22.0),
             max_undo_history: 0,
             max_scroll_height: None,
+            read_only: true,
         }
     }
 }
