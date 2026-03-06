@@ -462,7 +462,6 @@ impl RowViewer<BomEditRow> for BomEditViewer {
             table_row_height: Some(22.0),
             max_undo_history: 50,
             max_scroll_height: None,
-            read_only: false,
         }
     }
 

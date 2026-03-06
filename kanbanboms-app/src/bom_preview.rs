@@ -253,7 +253,6 @@ impl RowViewer<BomPreviewRow> for BomPreviewViewer {
             table_row_height: Some(22.0),
             max_undo_history: 0,
             max_scroll_height: None,
-            read_only: false,
         }
     }
 

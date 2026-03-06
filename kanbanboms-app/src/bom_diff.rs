@@ -418,12 +418,15 @@ impl RowViewer<BomDiffRow> for BomDiffViewer {
         ]
     }
 
+    fn allow_cell_edit(&mut self, _row: &BomDiffRow, _column: usize) -> bool {
+        false
+    }
+
     fn trivial_config(&mut self) -> egui_data_table::viewer::TrivialConfig {
         egui_data_table::viewer::TrivialConfig {
             table_row_height: Some(22.0),
             max_undo_history: 0,
             max_scroll_height: None,
-            read_only: true,
         }
     }
 }

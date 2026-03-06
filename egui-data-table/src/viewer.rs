@@ -109,6 +109,11 @@ pub trait RowViewer<R>: 'static {
         TableColumnConfig::auto().resizable(true)
     }
 
+    /// Whether the given cell can be edited (double-click / Enter). Default is true.
+    fn allow_cell_edit(&mut self, _row: &R, _column: usize) -> bool {
+        true
+    }
+
     /// Returns if given column is 'sortable'
     fn is_sortable_column(&mut self, column: usize) -> bool {
         let _ = column;

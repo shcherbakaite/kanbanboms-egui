@@ -498,7 +498,7 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
                     s.cci_sel_update(linear_index);
                 }
 
-                if resp.clicked_by(PointerButton::Primary) && is_interactive_cell {
+                if resp.clicked_by(PointerButton::Primary) && is_interactive_cell && viewer.allow_cell_edit(&table.rows[row_id.0], col.0) {
                     response_consumed = true;
                     commands.push(Command::CcEditStart(
                         row_id,
